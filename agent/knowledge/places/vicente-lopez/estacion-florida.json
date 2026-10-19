@@ -1,0 +1,12 @@
+{
+  "id": "estacion-florida",
+  "title": "Estación Florida",
+  "aliases": [
+    "Estación Florida",
+    "Estación Florida Mitre"
+  ],
+  "latitude": -34.5304,
+  "longitude": -58.4944,
+  "text": "Es una estación de la línea Mitre, de estilo victoriano. El barrio de Florida nació alrededor de ella: con el tren llegaron pobladores, casas quintas y viviendas para los empleados del ferrocarril.",
+  "source": "https://es.wikipedia.org/wiki/Estaci%C3%B3n_Florida_(Mitre)"
+}

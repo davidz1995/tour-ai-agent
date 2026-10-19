@@ -1,0 +1,12 @@
+[
+  {
+    "id": "caba",
+    "name": "Ciudad de Buenos Aires",
+    "bbox": { "south": -34.705, "west": -58.531, "north": -34.527, "east": -58.335 }
+  },
+  {
+    "id": "vicente-lopez",
+    "name": "Vicente López",
+    "bbox": { "south": -34.555, "west": -58.548, "north": -34.488, "east": -58.465 }
+  }
+]

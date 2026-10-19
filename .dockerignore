@@ -1,0 +1,10 @@
+.venv
+.env
+.git
+.cursor
+__pycache__
+*.py[cod]
+.pytest_cache
+tests
+docs
+*.log
