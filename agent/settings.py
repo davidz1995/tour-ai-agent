@@ -85,13 +85,13 @@ def settings_from(values: Mapping[str, str]) -> Settings:
 def parse_threshold(value: str) -> float:
     raw = value.strip()
     if not raw:
-        return 0.85
+        return 0.70
     try:
         number = float(raw)
     except ValueError:
-        return 0.85
+        return 0.70
     if not math.isfinite(number) or not 0.5 <= number <= 0.99:
-        return 0.85
+        return 0.70
     return number
 
 

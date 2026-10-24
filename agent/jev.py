@@ -18,15 +18,23 @@ JEV_TIMEOUT_SECONDS = 1.5
 QUESTION_ID = "should_speak"
 MAX_RESPONSE_BYTES = 32_768
 
-INSTRUCTIONS = "¿Es este un punto de interés turístico relevante sobre el cual el usuario aún no ha escuchado?"
+INSTRUCTIONS = (
+    "¿Es este un punto de interés turístico o cultural sobre el cual el usuario aún no ha escuchado? "
+    "Preferí aceptar lugares visitables aunque no sean famosos."
+)
 CRITERIA_TRUE = (
-    "El lugar es un monumento histórico, museo, plaza icónica o arquitectura notable, "
+    "El lugar es o parece un sitio para visitar o conocer: monumento, museo, plaza, iglesia, templo, "
+    "parque, teatro, estadio, universidad, atracción turística, arquitectura notable, "
+    "sitio histórico, biblioteca, cementerio histórico o similar, "
     "o `in_curated_base` es verdadero porque la guía lo eligió como sitio para contar, "
-    "Y NO aparece en la lista de recent_history."
+    "Y NO aparece en la lista de recent_history. "
+    "Si la categoría o el nombre sugieren un lugar cultural o turístico, respondé true aunque no sea icónico."
 )
 CRITERIA_FALSE = (
-    "El lugar es un negocio común, farmacia, cajero automático o un lugar genérico "
-    "y `in_curated_base` es falso, O ya aparece en el recent_history."
+    "El lugar es claramente un negocio de uso cotidiano: farmacia, cajero, kiosco, supermercado, "
+    "banco, estacionamiento, lavandería, consultorio, hotel genérico, bar o restaurante común "
+    "sin valor turístico, Y `in_curated_base` es falso; O ya aparece en el recent_history. "
+    "Ante la duda entre un negocio común y un sitio cultural, preferí true."
 )
 
 TOURIST_CATEGORIES = frozenset({
@@ -76,7 +84,28 @@ COMMON_CATEGORIES = frozenset({
     "supermarket",
 })
 COMMON_TOKENS = frozenset({"farmacia", "pharmacy", "cajero", "kiosco", "kiosk", "atm"})
-TOURIST_TOKENS = frozenset({"museo", "catedral", "monumento", "cabildo", "obelisco", "plaza"})
+TOURIST_TOKENS = frozenset({
+    "museo",
+    "catedral",
+    "iglesia",
+    "basilica",
+    "monumento",
+    "cabildo",
+    "obelisco",
+    "plaza",
+    "teatro",
+    "parque",
+    "estadio",
+    "universidad",
+    "biblioteca",
+    "cementerio",
+    "palacio",
+    "castillo",
+    "torre",
+    "puente",
+    "galeria",
+    "reserva",
+})
 
 
 class JevState(TypedDict):

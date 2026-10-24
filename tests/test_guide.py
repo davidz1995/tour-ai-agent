@@ -231,7 +231,7 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(nodes, ["evaluator"])
         result = graph.invoke(state)
         self.assertFalse(result["should_trigger"])
-        self.assertLess(result["jev_confidence"], 0.85)
+        self.assertLessEqual(result["jev_confidence"], DISABLED.jev_threshold)
         self.assertEqual(result["final_audio_script"], "")
         self.assertNotIn("No usar", result["final_audio_script"])
 
@@ -258,7 +258,7 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(nodes, ["evaluator", "guide"])
         result = graph.invoke(state)
         self.assertTrue(result["should_trigger"])
-        self.assertGreater(result["jev_confidence"], 0.85)
+        self.assertGreater(result["jev_confidence"], DISABLED.jev_threshold)
         self.assertIn("1810", result["final_audio_script"])
 
 
