@@ -180,10 +180,11 @@ class ContractTests(unittest.TestCase):
     def test_a_repeated_place_stays_silent(self):
         memory = MentionMemory()
         parsed = parse_context(context_body())
-        first = build_reply(parsed, DISABLED, user_id="visitante", memory=memory)
-        second = build_reply(parsed, DISABLED, user_id="visitante", memory=memory)
-        self.assertIn("1810", first)
-        self.assertEqual(second, "")
+        first = build_guide(parsed, DISABLED, user_id="visitante", memory=memory)
+        second = build_guide(parsed, DISABLED, user_id="visitante", memory=memory)
+        self.assertIn("1810", first.reply)
+        self.assertEqual(second.reply, "")
+        self.assertIn("1810", second.remembered)
 
     def test_known_place_includes_retrieved_history(self):
         status, body = response_for(json.dumps(context_body()).encode(), DISABLED)

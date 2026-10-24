@@ -201,6 +201,9 @@ def response_for(raw: bytes, settings: Settings) -> tuple[int, dict[str, object]
     }
     if guide.place is not None and reply:
         body["interest"] = interest_payload(guide.place)
+    remembered = guide.remembered.strip()
+    if guide.remembered_place is not None and remembered and not reply:
+        body["remembered"] = {"reply": remembered, **interest_payload(guide.remembered_place)}
     return 200, body
 
 

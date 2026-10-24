@@ -44,6 +44,8 @@ class GuideResult:
     reply: str
     place: Place | None = None
     places: tuple[Place, ...] = ()
+    remembered: str = ""
+    remembered_place: Place | None = None
 
 
 def build_reply(
@@ -101,21 +103,28 @@ def build_guide(
 
     spoken: Place | None = None
     reply = ""
+    remembered = ""
+    remembered_place: Place | None = None
     if speak:
         for cluster in clusters:
             if site_already_heard(cluster, history):
-                continue
+                cached = store.script_for(user_id, list(cluster.names()))
+                if cached and not remembered:
+                    remembered = cached
+                    remembered_place = cluster.primary
+                if cached:
+                    continue
             if budget.remaining() < GUIDE_RESERVE_SECONDS:
                 break
             script = narrate_cluster(cluster, settings, budget)
             if not script:
                 continue
             for name in cluster.names():
-                store.remember(user_id, name)
+                store.remember(user_id, name, script)
             spoken = cluster.primary
             reply = script
             break
-    return GuideResult(reply, spoken, interests)
+    return GuideResult(reply, spoken, interests, remembered, remembered_place)
 
 
 def site_already_heard(cluster: SiteCluster, history: list[str]) -> bool:
