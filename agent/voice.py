@@ -12,29 +12,41 @@ from agent.settings import Settings, completions_url
 
 GUIDE_TIMEOUT_SECONDS = 4
 MAX_MODEL_BYTES = 32_768
-MAX_REPLY_CHARS = 500
+MAX_REPLY_CHARS = 480
 MAX_LINES = 4
 
 EMPTY_REPLY = (
-    "Por acá no aparece ningún lugar destacado. "
-    "Seguí caminando y te aviso en cuanto tenga algo cerca para contarte."
+    "Por acá no veo nada especial para contarte ahora. "
+    "Si seguís un poco, te aviso apenas aparezca algo lindo."
 )
 UNREADABLE_REPLY = (
-    "Me llegaron lugares, pero no pude leer ninguno. "
-    "Seguí un poco y probamos de nuevo."
+    "Me llegaron lugares, pero no pude leer bien ninguno. "
+    "Demos unos pasos más y lo intentamos de nuevo."
 )
 
 GUIDE_SYSTEM_PROMPT = (
-    "Eres un guía turístico local que acompaña al usuario. "
-    "Redacta la respuesta para ser leída por un motor Text-to-Speech (TTS).\n"
-    "Reglas estrictas:\n"
-    "1. Escribe oraciones cortas, directas y conversacionales.\n"
-    "2. Ve directo al dato interesante en la primera línea.\n"
-    "3. No uses Markdown, emojis ni viñetas.\n"
-    "4. Extensión máxima: 3 o 4 líneas breves.\n"
-    "5. Si hay zones, contá primero el lugar principal y después mencioná "
-    "esas zonas en una sola oración, como partes del mismo sitio. "
-    "No digas que son lugares distintos."
+    "Sos un amigo o un familiar cercano caminando al lado de la persona. "
+    "Hablás en español rioplatense, de vos, con calidez tranquila. "
+    "El texto se lee en voz alta.\n"
+    "\n"
+    "Tono:\n"
+    "- Como si le mostraras el lugar a alguien querido, sin discurso ni dramatismo.\n"
+    "- Un dato verdadero y una sensación breve alcanzan: por qué vale mirarlo, "
+    "qué se siente estar ahí.\n"
+    "- Cercano, nunca empalagoso. Nada de 'mi amor', 'tesoro', preguntas íntimas, "
+    "reflexiones profundas ni consejos de vida.\n"
+    "- Nada de folleto, Wikipedia leída en voz alta ni robot. "
+    "No empieces siempre con 'Estás frente a', 'Acá tenés', 'Este es' o 'Mirá'.\n"
+    "- Variá el arranque. A veces el nombre, a veces el dato, a veces la sensación.\n"
+    "\n"
+    "Reglas:\n"
+    "1. Oraciones cortas y fáciles de escuchar caminando.\n"
+    "2. Máximo 3 oraciones. Mejor corto que largo.\n"
+    "3. Sin Markdown, emojis, viñetas ni signos de exclamación de más.\n"
+    "4. Usá solo el dato histórico del mensaje. Si no hay, no inventes fechas ni episodios.\n"
+    "5. Si hay zones, son partes del mismo sitio. Contá el lugar y después "
+    "mencioná esas zonas en una sola oración. No digas que son lugares distintos.\n"
+    "6. No saludes, no te presentes y no digas que sos una IA o un guía."
 )
 
 
@@ -89,16 +101,20 @@ def request_guide(
     if zones:
         payload_user["zones"] = zones
     user = json.dumps(payload_user, ensure_ascii=False)
+    user += (
+        "\nContalo con cercanía y brevedad, como si estuvieras caminando al lado. "
+        "Un dato verdadero y un toque humano alcanzan. Nada solemne."
+    )
     if description:
         user += "\nUsá solo ese dato histórico."
     else:
-        user += "\nNo hay dato histórico. No inventes fechas ni episodios."
+        user += "\nNo hay dato histórico. No inventes fechas ni episodios; invitá a mirar el lugar con calidez."
     if zones:
-        user += "\nLas zones son partes del mismo lugar. Mencionalas juntas al final."
+        user += "\nLas zones son partes del mismo lugar. Mencionalas juntas al final, con naturalidad."
     payload = {
         "model": settings.model_name,
-        "temperature": 0.4,
-        "max_tokens": 180,
+        "temperature": 0.7,
+        "max_tokens": 220,
         "messages": [
             {"role": "system", "content": GUIDE_SYSTEM_PROMPT},
             {"role": "user", "content": user},
@@ -175,17 +191,23 @@ def for_speech(text: str) -> str:
 
 def local_script(name: str, description: str, zones: list[str] | None = None) -> str:
     if description:
-        base = f"{name}. {description}"
+        base = f"Si mirás para allá, está {name}. {description} Vale la pena parar un segundo."
     elif name:
-        base = f"{name}. Está acá al lado."
+        base = f"Mirá, acá cerca tenés {name}. Si querés, demos una vuelta y lo miramos con calma."
     else:
-        base = "Hay algo cerca para mirar."
+        base = "Hay algo cerca que vale la pena mirar. Si querés, nos acercamos."
     zone_list = [zone for zone in (zones or []) if zone]
     if not zone_list:
         return base
     if len(zone_list) == 1:
-        return f"{base} También tiene {zone_list[0]}."
+        return f"{base} También tiene {zone_list[0]}, por si te dan ganas de quedarte un rato."
     if len(zone_list) == 2:
-        return f"{base} Tiene varias zonas, como {zone_list[0]} y {zone_list[1]}."
+        return (
+            f"{base} Adentro vas a encontrar {zone_list[0]} y {zone_list[1]}, "
+            "todo en el mismo lugar."
+        )
     head = ", ".join(zone_list[:-1])
-    return f"{base} Tiene varias zonas, como {head} y {zone_list[-1]}."
+    return (
+        f"{base} Tiene varias zonas para disfrutar, como {head} y {zone_list[-1]}, "
+        "sin salir del mismo sitio."
+    )

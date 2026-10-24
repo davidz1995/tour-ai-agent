@@ -74,7 +74,7 @@ class ContractTests(unittest.TestCase):
     def test_empty_list_says_there_is_nothing_nearby(self):
         status, body = response_for(json.dumps(context_body(pointsOfInterest=[])).encode(), DISABLED)
         self.assertEqual(status, 200)
-        self.assertIn("ningún lugar", body["reply"])
+        self.assertIn("nada especial", body["reply"])
 
     def test_reply_mentions_the_place_and_direction(self):
         status, body = response_for(json.dumps(context_body()).encode(), DISABLED)
