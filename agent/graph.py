@@ -7,6 +7,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from agent.cluster import SiteCluster, cluster_interests, rank_place
 from agent.contract import Context, Place
 from agent.deadline import Deadline
 from agent.history import SHARED_MEMORY, MentionMemory
@@ -71,36 +72,71 @@ def build_guide(
     budget = deadline if deadline is not None else Deadline()
     store = memory if memory is not None else SHARED_MEMORY
     history = store.recent(user_id)
-    interests: list[Place] = []
-    spoken: Place | None = None
-    reply = ""
+    ranked = []
     for mention in situation.mentions:
         if budget.remaining() < GUIDE_RESERVE_SECONDS:
             break
         document = load_index().search(mention.place)
+        description = document.text if document is not None else ""
+        curated = document is not None
         state = initial_state(
             latitude=situation.origin.latitude,
             longitude=situation.origin.longitude,
             name=mention.place.name,
             category=mention.place.category or "",
-            description=document.text if document is not None else "",
-            source="local" if document is not None else "",
+            description=description,
+            source="local" if curated else "",
             place_latitude=mention.place.latitude,
             place_longitude=mention.place.longitude,
             recent_history=[],
         )
         if not evaluate(state, settings, budget)["should_trigger"]:
             continue
-        interests.append(mention.place)
-        if not speak or spoken is not None or already_heard(mention.place.name, history):
-            continue
-        script = str(narrate(state, settings, budget).get("final_audio_script", "")).strip()
-        if not script:
-            continue
-        store.remember(user_id, mention.place.name)
-        spoken = mention.place
-        reply = script
-    return GuideResult(reply, spoken, tuple(interests))
+        ranked.append(rank_place(mention.place, description, curated))
+
+    clusters = cluster_interests(ranked)
+    interests = tuple(cluster.primary for cluster in clusters)
+    if not clusters:
+        return GuideResult("", None, ())
+
+    spoken: Place | None = None
+    reply = ""
+    if speak:
+        for cluster in clusters:
+            if site_already_heard(cluster, history):
+                continue
+            if budget.remaining() < GUIDE_RESERVE_SECONDS:
+                break
+            script = narrate_cluster(cluster, settings, budget)
+            if not script:
+                continue
+            for name in cluster.names():
+                store.remember(user_id, name)
+            spoken = cluster.primary
+            reply = script
+            break
+    return GuideResult(reply, spoken, interests)
+
+
+def site_already_heard(cluster: SiteCluster, history: list[str]) -> bool:
+    return any(already_heard(name, history) for name in cluster.names())
+
+
+def narrate_cluster(cluster: SiteCluster, settings: Settings, deadline: Deadline) -> str:
+    state = initial_state(
+        latitude=cluster.primary.latitude,
+        longitude=cluster.primary.longitude,
+        name=cluster.primary.name,
+        category=cluster.primary.category or "",
+        description=cluster.description,
+        source="local" if cluster.curated else "",
+        place_latitude=cluster.primary.latitude,
+        place_longitude=cluster.primary.longitude,
+        recent_history=[],
+    )
+    return str(
+        narrate(state, settings, deadline, zones=cluster.zone_labels).get("final_audio_script", "")
+    ).strip()
 
 
 def compile_graph(settings: Settings, deadline: Deadline | None = None):
@@ -137,7 +173,12 @@ def evaluate(state: GuideState, settings: Settings, deadline: Deadline) -> dict[
     }
 
 
-def narrate(state: GuideState, settings: Settings, deadline: Deadline) -> dict[str, object]:
+def narrate(
+    state: GuideState,
+    settings: Settings,
+    deadline: Deadline,
+    zones: tuple[str, ...] | list[str] = (),
+) -> dict[str, object]:
     poi = dict(state["poi_data"])
     if not poi["description"]:
         timeout = deadline.timeout_for(WIKI_TIMEOUT_SECONDS, reserve=GUIDE_RESERVE_SECONDS)
@@ -152,6 +193,7 @@ def narrate(state: GuideState, settings: Settings, deadline: Deadline) -> dict[s
         poi["description"],
         settings,
         deadline.timeout_for(GUIDE_TIMEOUT_SECONDS, reserve=0.2),
+        zones=zones,
     )
     return {"poi_data": poi, "final_audio_script": script}
 

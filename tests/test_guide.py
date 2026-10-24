@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from agent.cluster import cluster_interests, rank_place, zone_label
 from agent.contract import Place, parse_context
 from agent.deadline import Deadline
 from agent.graph import build_guide, build_reply, compile_graph
@@ -129,6 +130,53 @@ class ContractTests(unittest.TestCase):
         spoken = build_guide(parsed, DISABLED, user_id="visitante", memory=memory)
         self.assertIn("1810", spoken.reply)
 
+    def test_plaza_zones_collapse_into_one_interest_and_one_story(self):
+        places = [
+            {
+                "id": "plaza",
+                "name": "Plaza San Martín",
+                "latitude": -34.5950,
+                "longitude": -58.3750,
+                "category": "plaza",
+                "distanceMeters": 40,
+            },
+            {
+                "id": "juegos",
+                "name": "Zona de juegos Plaza San Martín",
+                "latitude": -34.5952,
+                "longitude": -58.3751,
+                "category": "park",
+                "distanceMeters": 55,
+            },
+            {
+                "id": "mascotas",
+                "name": "Área de mascotas Plaza San Martín",
+                "latitude": -34.5949,
+                "longitude": -58.3748,
+                "category": "park",
+                "distanceMeters": 70,
+            },
+            {
+                "id": "gym",
+                "name": "Zona de entrenamiento Plaza San Martín",
+                "latitude": -34.5951,
+                "longitude": -58.3753,
+                "category": "park",
+                "distanceMeters": 65,
+            },
+        ]
+        status, body = response_for(
+            json.dumps(context_body(pointsOfInterest=places)).encode(),
+            DISABLED,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["name"] for item in body["interests"]], ["Plaza San Martín"])
+        self.assertEqual(body["interest"]["name"], "Plaza San Martín")
+        reply = body["reply"]
+        self.assertIn("Plaza San Martín", reply)
+        self.assertTrue(any(word in reply for word in ("juegos", "mascotas", "entrenamiento")))
+        self.assertNotIn("Zona de juegos Plaza San Martín", body["interests"][0]["name"])
+
     def test_a_repeated_place_stays_silent(self):
         memory = MentionMemory()
         parsed = parse_context(context_body())
@@ -185,6 +233,36 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertIn("no pude leer", body["reply"])
+
+
+class ClusterTests(unittest.TestCase):
+    def test_nearby_plaza_amenities_become_one_cluster(self):
+        plaza = Place("Plaza San Martín", "plaza", 40, -34.5950, -58.3750)
+        games = Place("Zona de juegos Plaza San Martín", "park", 55, -34.5952, -58.3751)
+        dogs = Place("Área de mascotas Plaza San Martín", "park", 70, -34.5949, -58.3748)
+        clusters = cluster_interests(
+            [
+                rank_place(games, "", False),
+                rank_place(plaza, "Historia de la plaza.", False),
+                rank_place(dogs, "", False),
+            ]
+        )
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(clusters[0].primary.name, "Plaza San Martín")
+        self.assertEqual(
+            set(clusters[0].zone_labels),
+            {"juegos", "mascotas"},
+        )
+
+    def test_far_places_stay_separate(self):
+        plaza = Place("Plaza San Martín", "plaza", 40, -34.5950, -58.3750)
+        other = Place("Plaza Italia", "plaza", 80, -34.5800, -58.4200)
+        clusters = cluster_interests([rank_place(plaza, "", False), rank_place(other, "", False)])
+        self.assertEqual({cluster.primary.name for cluster in clusters}, {"Plaza San Martín", "Plaza Italia"})
+
+    def test_zone_label_reads_the_amenity(self):
+        self.assertEqual(zone_label("Zona de entrenamiento Plaza San Martín"), "entrenamiento")
+        self.assertEqual(zone_label("Área de mascotas"), "mascotas")
 
 
 class GraphTests(unittest.TestCase):

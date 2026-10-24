@@ -31,7 +31,10 @@ GUIDE_SYSTEM_PROMPT = (
     "1. Escribe oraciones cortas, directas y conversacionales.\n"
     "2. Ve directo al dato interesante en la primera línea.\n"
     "3. No uses Markdown, emojis ni viñetas.\n"
-    "4. Extensión máxima: 3 o 4 líneas breves."
+    "4. Extensión máxima: 3 o 4 líneas breves.\n"
+    "5. Si hay zones, contá primero el lugar principal y después mencioná "
+    "esas zonas en una sola oración, como partes del mismo sitio. "
+    "No digas que son lugares distintos."
 )
 
 
@@ -49,14 +52,24 @@ def write_script(
     description: str,
     settings: Settings,
     timeout: float | None = GUIDE_TIMEOUT_SECONDS,
+    zones: tuple[str, ...] | list[str] = (),
 ) -> str:
     name = name.strip()
     description = description.strip()
+    zone_list = [zone.strip() for zone in zones if isinstance(zone, str) and zone.strip()]
     if settings.model_enabled and settings.model_base_url and timeout is not None:
-        generated = request_guide(name, category, description, settings, settings.model_base_url, timeout)
+        generated = request_guide(
+            name,
+            category,
+            description,
+            settings,
+            settings.model_base_url,
+            timeout,
+            zone_list,
+        )
         if generated:
             return generated
-    return local_script(name, description)
+    return local_script(name, description, zone_list)
 
 
 def request_guide(
@@ -66,15 +79,22 @@ def request_guide(
     settings: Settings,
     base_url: str,
     timeout: float = GUIDE_TIMEOUT_SECONDS,
+    zones: list[str] | None = None,
 ) -> str | None:
-    user = json.dumps(
-        {"place": name, "category": category, "historicalContext": description},
-        ensure_ascii=False,
-    )
+    payload_user = {
+        "place": name,
+        "category": category,
+        "historicalContext": description,
+    }
+    if zones:
+        payload_user["zones"] = zones
+    user = json.dumps(payload_user, ensure_ascii=False)
     if description:
         user += "\nUsá solo ese dato histórico."
     else:
         user += "\nNo hay dato histórico. No inventes fechas ni episodios."
+    if zones:
+        user += "\nLas zones son partes del mismo lugar. Mencionalas juntas al final."
     payload = {
         "model": settings.model_name,
         "temperature": 0.4,
@@ -153,9 +173,19 @@ def for_speech(text: str) -> str:
     return clean_text(" ".join(lines), MAX_REPLY_CHARS)
 
 
-def local_script(name: str, description: str) -> str:
+def local_script(name: str, description: str, zones: list[str] | None = None) -> str:
     if description:
-        return f"{name}. {description}"
-    if name:
-        return f"{name}. Está acá al lado."
-    return "Hay algo cerca para mirar."
+        base = f"{name}. {description}"
+    elif name:
+        base = f"{name}. Está acá al lado."
+    else:
+        base = "Hay algo cerca para mirar."
+    zone_list = [zone for zone in (zones or []) if zone]
+    if not zone_list:
+        return base
+    if len(zone_list) == 1:
+        return f"{base} También tiene {zone_list[0]}."
+    if len(zone_list) == 2:
+        return f"{base} Tiene varias zonas, como {zone_list[0]} y {zone_list[1]}."
+    head = ", ".join(zone_list[:-1])
+    return f"{base} Tiene varias zonas, como {head} y {zone_list[-1]}."
