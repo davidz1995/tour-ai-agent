@@ -16,6 +16,7 @@ from agent.retrieve import KNOWLEDGE_DIR, load_index, read_knowledge, search_his
 from agent.server import body_length_error, response_for
 from agent.settings import settings_from
 from agent.situation import analyze_situation
+from agent.voice import ensure_place_name, mentions_place
 
 DISABLED = settings_from({"MODEL_API_KEY": "", "MODEL_BASE_URL": "https://api.openai.com/v1", "MODEL_NAME": "gpt-4o-mini"})
 
@@ -511,6 +512,21 @@ class CityKnowledgeTests(unittest.TestCase):
             (folder / "roto.json").write_text("{no es json", encoding="utf-8")
             index = read_knowledge(base)
         self.assertEqual(index.counts()["caba"], 0)
+
+
+class VoiceNameTests(unittest.TestCase):
+    def test_mentions_place_with_accents(self):
+        self.assertTrue(mentions_place("Vale la pena mirar la Plaza San Martín un rato.", "Plaza San Martín"))
+        self.assertTrue(mentions_place("La plaza san martin tiene sombra.", "Plaza San Martín"))
+
+    def test_ensure_place_name_prefixes_when_missing(self):
+        text = ensure_place_name("Es un espacio verde ideal para desconectar un rato.", "Plaza San Martín")
+        self.assertTrue(text.startswith("Plaza San Martín."))
+        self.assertIn("espacio verde", text)
+
+    def test_ensure_place_name_keeps_text_when_present(self):
+        original = "Si mirás para allá, está Plaza San Martín. Vale la pena parar."
+        self.assertEqual(ensure_place_name(original, "Plaza San Martín"), original)
 
 
 class SettingsTests(unittest.TestCase):

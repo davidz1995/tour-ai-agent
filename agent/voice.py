@@ -8,7 +8,9 @@ import urllib.error
 import urllib.request
 
 from agent.contract import clean_text
+from agent.retrieve import tokens
 from agent.settings import Settings, completions_url
+from agent.situation import fold
 
 GUIDE_TIMEOUT_SECONDS = 4
 MAX_MODEL_BYTES = 32_768
@@ -37,16 +39,18 @@ GUIDE_SYSTEM_PROMPT = (
     "reflexiones profundas ni consejos de vida.\n"
     "- Nada de folleto, Wikipedia leída en voz alta ni robot. "
     "No empieces siempre con 'Estás frente a', 'Acá tenés', 'Este es' o 'Mirá'.\n"
-    "- Variá el arranque. A veces el nombre, a veces el dato, a veces la sensación.\n"
+    "- Variá el arranque, pero el nombre del lugar siempre tiene que escucharse.\n"
     "\n"
     "Reglas:\n"
-    "1. Oraciones cortas y fáciles de escuchar caminando.\n"
-    "2. Máximo 3 oraciones. Mejor corto que largo.\n"
-    "3. Sin Markdown, emojis, viñetas ni signos de exclamación de más.\n"
-    "4. Usá solo el dato histórico del mensaje. Si no hay, no inventes fechas ni episodios.\n"
-    "5. Si hay zones, son partes del mismo sitio. Contá el lugar y después "
+    "1. El nombre exacto del campo place tiene que aparecer en el relato. "
+    "La persona puede ir con el teléfono guardado y necesita oír cómo se llama el lugar.\n"
+    "2. Oraciones cortas y fáciles de escuchar caminando.\n"
+    "3. Máximo 3 oraciones. Mejor corto que largo.\n"
+    "4. Sin Markdown, emojis, viñetas ni signos de exclamación de más.\n"
+    "5. Usá solo el dato histórico del mensaje. Si no hay, no inventes fechas ni episodios.\n"
+    "6. Si hay zones, son partes del mismo sitio. Contá el lugar y después "
     "mencioná esas zonas en una sola oración. No digas que son lugares distintos.\n"
-    "6. No saludes, no te presentes y no digas que sos una IA o un guía."
+    "7. No saludes, no te presentes y no digas que sos una IA o un guía."
 )
 
 
@@ -80,7 +84,7 @@ def write_script(
             zone_list,
         )
         if generated:
-            return generated
+            return ensure_place_name(generated, name)
     return local_script(name, description, zone_list)
 
 
@@ -103,7 +107,8 @@ def request_guide(
     user = json.dumps(payload_user, ensure_ascii=False)
     user += (
         "\nContalo con cercanía y brevedad, como si estuvieras caminando al lado. "
-        "Un dato verdadero y un toque humano alcanzan. Nada solemne."
+        "Un dato verdadero y un toque humano alcanzan. Nada solemne. "
+        f"Decí el nombre del lugar tal cual: {name}."
     )
     if description:
         user += "\nUsá solo ese dato histórico."
@@ -189,6 +194,28 @@ def for_speech(text: str) -> str:
     return clean_text(" ".join(lines), MAX_REPLY_CHARS)
 
 
+def mentions_place(text: str, name: str) -> bool:
+    cleaned_name = name.strip()
+    if not cleaned_name:
+        return True
+    folded_text = fold(text)
+    folded_name = fold(cleaned_name)
+    if folded_name and folded_name in folded_text:
+        return True
+    name_tokens = [token for token in tokens(cleaned_name) if len(token) >= 3]
+    if len(name_tokens) >= 2 and all(token in folded_text for token in name_tokens):
+        return True
+    return False
+
+
+def ensure_place_name(text: str, name: str) -> str:
+    cleaned = text.strip()
+    cleaned_name = name.strip()
+    if not cleaned or not cleaned_name or mentions_place(cleaned, cleaned_name):
+        return cleaned
+    return clean_text(f"{cleaned_name}. {cleaned}", MAX_REPLY_CHARS)
+
+
 def local_script(name: str, description: str, zones: list[str] | None = None) -> str:
     if description:
         base = f"Si mirás para allá, está {name}. {description} Vale la pena parar un segundo."
@@ -198,16 +225,21 @@ def local_script(name: str, description: str, zones: list[str] | None = None) ->
         base = "Hay algo cerca que vale la pena mirar. Si querés, nos acercamos."
     zone_list = [zone for zone in (zones or []) if zone]
     if not zone_list:
-        return base
+        return ensure_place_name(base, name)
     if len(zone_list) == 1:
-        return f"{base} También tiene {zone_list[0]}, por si te dan ganas de quedarte un rato."
+        return ensure_place_name(
+            f"{base} También tiene {zone_list[0]}, por si te dan ganas de quedarte un rato.",
+            name,
+        )
     if len(zone_list) == 2:
-        return (
+        return ensure_place_name(
             f"{base} Adentro vas a encontrar {zone_list[0]} y {zone_list[1]}, "
-            "todo en el mismo lugar."
+            "todo en el mismo lugar.",
+            name,
         )
     head = ", ".join(zone_list[:-1])
-    return (
+    return ensure_place_name(
         f"{base} Tiene varias zonas para disfrutar, como {head} y {zone_list[-1]}, "
-        "sin salir del mismo sitio."
+        "sin salir del mismo sitio.",
+        name,
     )
