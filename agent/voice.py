@@ -8,7 +8,6 @@ import urllib.error
 import urllib.request
 
 from agent.contract import clean_text
-from agent.retrieve import tokens
 from agent.settings import Settings, completions_url
 from agent.situation import fold
 
@@ -32,18 +31,18 @@ GUIDE_SYSTEM_PROMPT = (
     "El texto se lee en voz alta.\n"
     "\n"
     "Tono:\n"
-    "- Como si le mostraras el lugar a alguien querido, sin discurso ni dramatismo.\n"
-    "- Un dato verdadero y una sensación breve alcanzan: por qué vale mirarlo, "
-    "qué se siente estar ahí.\n"
-    "- Cercano, nunca empalagoso. Nada de 'mi amor', 'tesoro', preguntas íntimas, "
-    "reflexiones profundas ni consejos de vida.\n"
-    "- Nada de folleto, Wikipedia leída en voz alta ni robot. "
-    "No empieces siempre con 'Estás frente a', 'Acá tenés', 'Este es' o 'Mirá'.\n"
-    "- Variá el arranque, pero el nombre del lugar siempre tiene que escucharse.\n"
+    "- Contale qué es el lugar, como si se lo señalaras a un amigo: nombre, qué es y un dato real.\n"
+    "- Cercano y natural, sin dramatismo ni discurso.\n"
+    "- Nada de energías, vibras, aura, magia del lugar, 'se siente la historia', "
+    "'respira historia', positivismo extremo ni frases motivacionales.\n"
+    "- No digas cómo 'se siente' el lugar. Preferí hechos: qué es, cuándo, para qué sirve, qué mirar.\n"
+    "- Nada de folleto, Wikipedia leída en voz alta ni robot.\n"
+    "- Variá el arranque, pero siempre con el nombre exacto del lugar.\n"
     "\n"
     "Reglas:\n"
-    "1. El nombre exacto del campo place tiene que aparecer en el relato. "
-    "La persona puede ir con el teléfono guardado y necesita oír cómo se llama el lugar.\n"
+    "1. El nombre exacto del campo place tiene que aparecer tal cual en el relato. "
+    "No lo cambies, no lo alargues y no uses otro nombre aunque el contexto histórico "
+    "diga distinto. La persona puede ir con el teléfono guardado.\n"
     "2. Oraciones cortas y fáciles de escuchar caminando.\n"
     "3. Máximo 3 oraciones. Mejor corto que largo.\n"
     "4. Sin Markdown, emojis, viñetas ni signos de exclamación de más.\n"
@@ -106,20 +105,23 @@ def request_guide(
         payload_user["zones"] = zones
     user = json.dumps(payload_user, ensure_ascii=False)
     user += (
-        "\nContalo con cercanía y brevedad, como si estuvieras caminando al lado. "
-        "Un dato verdadero y un toque humano alcanzan. Nada solemne. "
-        f"Decí el nombre del lugar tal cual: {name}."
+        "\nContalo con cercanía y brevedad, como un amigo que señala el lugar. "
+        "Hechos concretos, sin energías ni sensaciones místicas. "
+        f"Usá exactamente este nombre y ningún otro: {name}."
     )
     if description:
-        user += "\nUsá solo ese dato histórico."
+        user += (
+            "\nUsá solo ese dato histórico. Si ahí aparece otro nombre del lugar, "
+            "ignorá ese nombre y usá solo el de place."
+        )
     else:
-        user += "\nNo hay dato histórico. No inventes fechas ni episodios; invitá a mirar el lugar con calidez."
+        user += "\nNo hay dato histórico. No inventes fechas ni episodios; explicá qué es el lugar con naturalidad."
     if zones:
         user += "\nLas zones son partes del mismo lugar. Mencionalas juntas al final, con naturalidad."
     payload = {
         "model": settings.model_name,
-        "temperature": 0.7,
-        "max_tokens": 220,
+        "temperature": 0.45,
+        "max_tokens": 200,
         "messages": [
             {"role": "system", "content": GUIDE_SYSTEM_PROMPT},
             {"role": "user", "content": user},
@@ -195,51 +197,44 @@ def for_speech(text: str) -> str:
 
 
 def mentions_place(text: str, name: str) -> bool:
+    """El nombre del título tiene que aparecer tal cual (sin exigir acentos)."""
     cleaned_name = name.strip()
     if not cleaned_name:
         return True
     folded_text = fold(text)
     folded_name = fold(cleaned_name)
-    if folded_name and folded_name in folded_text:
-        return True
-    name_tokens = [token for token in tokens(cleaned_name) if len(token) >= 3]
-    if len(name_tokens) >= 2 and all(token in folded_text for token in name_tokens):
-        return True
-    return False
+    return bool(folded_name) and folded_name in folded_text
 
 
 def ensure_place_name(text: str, name: str) -> str:
     cleaned = text.strip()
     cleaned_name = name.strip()
-    if not cleaned or not cleaned_name or mentions_place(cleaned, cleaned_name):
+    if not cleaned or not cleaned_name:
+        return cleaned
+    if mentions_place(cleaned, cleaned_name):
         return cleaned
     return clean_text(f"{cleaned_name}. {cleaned}", MAX_REPLY_CHARS)
 
 
 def local_script(name: str, description: str, zones: list[str] | None = None) -> str:
     if description:
-        base = f"Si mirás para allá, está {name}. {description} Vale la pena parar un segundo."
+        base = f"{name}. {description}"
     elif name:
-        base = f"Mirá, acá cerca tenés {name}. Si querés, demos una vuelta y lo miramos con calma."
+        base = f"{name}. Está acá cerca, por si querés acercarte a mirarlo."
     else:
-        base = "Hay algo cerca que vale la pena mirar. Si querés, nos acercamos."
+        base = "Hay algo cerca que vale la pena mirar."
     zone_list = [zone for zone in (zones or []) if zone]
     if not zone_list:
         return ensure_place_name(base, name)
     if len(zone_list) == 1:
-        return ensure_place_name(
-            f"{base} También tiene {zone_list[0]}, por si te dan ganas de quedarte un rato.",
-            name,
-        )
+        return ensure_place_name(f"{base} También tiene {zone_list[0]}.", name)
     if len(zone_list) == 2:
         return ensure_place_name(
-            f"{base} Adentro vas a encontrar {zone_list[0]} y {zone_list[1]}, "
-            "todo en el mismo lugar.",
+            f"{base} Adentro están {zone_list[0]} y {zone_list[1]}, todo en el mismo lugar.",
             name,
         )
     head = ", ".join(zone_list[:-1])
     return ensure_place_name(
-        f"{base} Tiene varias zonas para disfrutar, como {head} y {zone_list[-1]}, "
-        "sin salir del mismo sitio.",
+        f"{base} Tiene varias zonas, como {head} y {zone_list[-1]}.",
         name,
     )

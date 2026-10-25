@@ -519,10 +519,21 @@ class VoiceNameTests(unittest.TestCase):
         self.assertTrue(mentions_place("Vale la pena mirar la Plaza San Martín un rato.", "Plaza San Martín"))
         self.assertTrue(mentions_place("La plaza san martin tiene sombra.", "Plaza San Martín"))
 
+    def test_wikipedia_style_name_is_not_enough(self):
+        self.assertFalse(
+            mentions_place(
+                "La Plaza General San Martín es el principal espacio verde de Retiro.",
+                "Plaza San Martín",
+            )
+        )
+
     def test_ensure_place_name_prefixes_when_missing(self):
-        text = ensure_place_name("Es un espacio verde ideal para desconectar un rato.", "Plaza San Martín")
+        text = ensure_place_name(
+            "La Plaza General San Martín es el principal espacio verde de Retiro.",
+            "Plaza San Martín",
+        )
         self.assertTrue(text.startswith("Plaza San Martín."))
-        self.assertIn("espacio verde", text)
+        self.assertIn("Plaza San Martín", text)
 
     def test_ensure_place_name_keeps_text_when_present(self):
         original = "Si mirás para allá, está Plaza San Martín. Vale la pena parar."
