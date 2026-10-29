@@ -1,4 +1,4 @@
-"""HTTP del motor. Solo POST /context; no abre el socket de la app."""
+"""HTTP del motor. POST /context arma el relato. POST /visits/verify mira la foto."""
 
 from __future__ import annotations
 
@@ -14,11 +14,14 @@ from agent.contract import InvalidContext, Place, clean_text, parse_context
 from agent.graph import build_guide
 from agent.retrieve import load_index
 from agent.settings import Settings, load_settings
+from agent.visit import verify_response
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 MAX_BODY_BYTES = 65_536
+MAX_VISIT_BODY_BYTES = 8 * 1024 * 1024
 JSON_ERROR = "El cuerpo tiene que ser un JSON"
+VISIT_BODY_ERROR = "El cuerpo tiene que ser multipart"
 FAILURE_MESSAGE = "No pude armar el relato en este momento."
 
 
@@ -119,7 +122,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"message": FAILURE_MESSAGE})
 
     def _route(self, method: str) -> None:
-        if urlsplit(self.path).path != "/context":
+        path = urlsplit(self.path).path
+        if path == "/visits/verify":
+            self._verify(method)
+            return
+        if path != "/context":
             self._json(404, {"message": "No encontrado"})
             return
         if method != "POST":
@@ -131,24 +138,47 @@ class Handler(BaseHTTPRequestHandler):
         status, body = response_for(raw, self.settings)
         self._json(status, body)
 
-    def _read_body(self) -> bytes | None:
+    def _verify(self, method: str) -> None:
+        try:
+            self._post_visit(method)
+        except Exception:
+            sys.stderr.write("no se pudo verificar la visita\n")
+            self._json(200, {"embedding": {"available": False}, "jev": {"available": False}})
+
+    def _post_visit(self, method: str) -> None:
+        if method != "POST":
+            self._json(405, {"message": "Método no permitido"})
+            return
+        raw = self._read_body(MAX_VISIT_BODY_BYTES, VISIT_BODY_ERROR)
+        if raw is None:
+            return
+        types = self.headers.get_all("Content-Type") or []
+        if len(types) != 1:
+            self._json(400, {"message": VISIT_BODY_ERROR})
+            return
+        status, body = verify_response(types[0], raw, self.settings)
+        self._json(status, body)
+
+    def _read_body(self, max_bytes: int = MAX_BODY_BYTES, problem: str = JSON_ERROR) -> bytes | None:
         lengths = self.headers.get_all("Content-Length") or []
-        problem = body_length_error(
+        length_error = body_length_error(
             lengths[0] if len(lengths) == 1 else None,
             self.headers.get("Transfer-Encoding"),
             length_count=len(lengths),
+            max_bytes=max_bytes,
+            problem=problem,
         )
-        if problem is not None:
-            self._json(400, {"message": problem})
+        if length_error is not None:
+            self._json(400, {"message": length_error})
             return None
         length = int(lengths[0].strip())
         try:
             raw = self.rfile.read(length)
         except (TimeoutError, OSError):
-            self._json(400, {"message": JSON_ERROR})
+            self._json(400, {"message": problem})
             return None
         if len(raw) != length:
-            self._json(400, {"message": JSON_ERROR})
+            self._json(400, {"message": problem})
             return None
         return raw
 
@@ -229,17 +259,19 @@ def body_length_error(
     content_length: str | None,
     transfer_encoding: str | None,
     length_count: int = 1,
+    max_bytes: int = MAX_BODY_BYTES,
+    problem: str = JSON_ERROR,
 ) -> str | None:
     if transfer_encoding or length_count != 1:
-        return JSON_ERROR
+        return problem
     if content_length is None:
-        return JSON_ERROR
+        return problem
     header = content_length.strip()
     if len(header) > 8 or not header.isdigit():
-        return JSON_ERROR
+        return problem
     length = int(header)
     if length == 0:
-        return JSON_ERROR
-    if length > MAX_BODY_BYTES:
+        return problem
+    if length > max_bytes:
         return "El cuerpo es demasiado grande"
     return None
