@@ -8,7 +8,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from agent.cluster import SiteCluster, cluster_interests, rank_place
-from agent.contract import Context, Place
+from agent.contract import Area, Context, Place
 from agent.deadline import Deadline
 from agent.history import SHARED_MEMORY, MentionMemory
 from agent.jev import JEV_TIMEOUT_SECONDS, already_heard, clean_jev_state, probability_of_true
@@ -67,13 +67,15 @@ def build_guide(
     speak: bool = True,
 ) -> GuideResult:
     situation = analyze_situation(context)
+    store = memory if memory is not None else SHARED_MEMORY
+    history = store.recent(user_id)
+    custom = next_custom_area(context, history) if speak else None
+    if custom is not None:
+        return spoken_custom_area(store, user_id, custom)
+    budget = deadline if deadline is not None else Deadline()
     if not situation.mentions:
         reply = UNREADABLE_REPLY if situation.unreadable else EMPTY_REPLY
         return GuideResult(reply)
-
-    budget = deadline if deadline is not None else Deadline()
-    store = memory if memory is not None else SHARED_MEMORY
-    history = store.recent(user_id)
     ranked = []
     for mention in situation.mentions:
         if budget.remaining() < GUIDE_RESERVE_SECONDS:
@@ -125,6 +127,34 @@ def build_guide(
             reply = script
             break
     return GuideResult(reply, spoken, interests, remembered, remembered_place)
+
+
+CUSTOM_AREA = "custom-area"
+
+
+def next_custom_area(context: Context, history: list[str]) -> Area | None:
+    for area in context.areas:
+        if area.category != CUSTOM_AREA or already_heard(area.name, history):
+            continue
+        if area.description.strip():
+            return area
+    return None
+
+
+def place_for_area(area: Area) -> Place:
+    return Place(
+        name=area.name,
+        category=area.category,
+        distance_meters=0,
+        latitude=area.latitude,
+        longitude=area.longitude,
+    )
+
+
+def spoken_custom_area(store: MentionMemory, user_id: str, area: Area) -> GuideResult:
+    place = place_for_area(area)
+    store.remember(user_id, area.name, area.description)
+    return GuideResult(area.description, place, (place,))
 
 
 def site_already_heard(cluster: SiteCluster, history: list[str]) -> bool:

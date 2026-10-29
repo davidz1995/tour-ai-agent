@@ -7,7 +7,10 @@ from dataclasses import dataclass
 
 MAX_NAME_CHARS = 80
 MAX_CATEGORY_CHARS = 40
+MAX_AREA_NAME_CHARS = 200
+MAX_AREA_DESCRIPTION_CHARS = 500
 MAX_PLACES = 20
+MAX_AREAS = 8
 MAX_DISTANCE_METERS = 100_000
 
 
@@ -27,10 +30,20 @@ class Place:
 
 
 @dataclass(frozen=True)
+class Area:
+    name: str
+    category: str
+    description: str
+    latitude: float
+    longitude: float
+
+
+@dataclass(frozen=True)
 class Context:
     location: Coordinates
     places: list[Place]
     received_places: int
+    areas: list[Area]
 
 
 class InvalidContext(Exception):
@@ -59,7 +72,12 @@ def parse_context(payload: object) -> Context:
 
     if problems or location is None:
         raise InvalidContext(". ".join(problems) or "Falta la ubicación")
-    return Context(location=location, places=places, received_places=received)
+    return Context(
+        location=location,
+        places=places,
+        received_places=received,
+        areas=read_areas(payload.get("areas", [])),
+    )
 
 
 def read_location(value: object) -> tuple[Coordinates | None, str | None]:
@@ -81,6 +99,45 @@ def read_places(items: list[object]) -> list[Place]:
         if place is not None:
             places.append(place)
     return places
+
+
+def read_areas(value: object) -> list[Area]:
+    if not isinstance(value, list):
+        return []
+    areas: list[Area] = []
+    for item in value:
+        if len(areas) >= MAX_AREAS:
+            break
+        area = read_area(item)
+        if area is not None:
+            areas.append(area)
+    return areas
+
+
+def read_area(value: object) -> Area | None:
+    if not isinstance(value, dict):
+        return None
+    name = value.get("name")
+    category = value.get("category")
+    description = value.get("description")
+    if not isinstance(name, str) or not isinstance(category, str) or not isinstance(description, str):
+        return None
+    cleaned_name = clean_text(name, MAX_AREA_NAME_CHARS)
+    cleaned_category = clean_text(category, MAX_CATEGORY_CHARS)
+    cleaned_description = clean_text(description, MAX_AREA_DESCRIPTION_CHARS)
+    if not cleaned_name or not cleaned_category or not cleaned_description:
+        return None
+    latitude = value.get("latitude")
+    longitude = value.get("longitude")
+    if not _is_coordinate(latitude, -90, 90) or not _is_coordinate(longitude, -180, 180):
+        return None
+    return Area(
+        name=cleaned_name,
+        category=cleaned_category,
+        description=cleaned_description,
+        latitude=float(latitude),
+        longitude=float(longitude),
+    )
 
 
 def read_place(value: object) -> Place | None:

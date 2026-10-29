@@ -77,6 +77,58 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("nada especial", body["reply"])
 
+    def test_custom_area_is_told_before_a_nearby_place(self):
+        area = {
+            "name": "Estadio Ciudad de Vicente López",
+            "category": "custom-area",
+            "description": "Es la cancha del Club Atlético Platense.",
+            "latitude": -34.5405,
+            "longitude": -58.4822,
+        }
+        raw = json.dumps(context_body(areas=[area])).encode()
+        status, first = response_for(raw, DISABLED)
+        self.assertEqual(status, 200)
+        self.assertEqual(first["reply"], "Es la cancha del Club Atlético Platense.")
+        self.assertEqual(first["interest"]["name"], "Estadio Ciudad de Vicente López")
+        self.assertEqual(first["interest"]["category"], "custom-area")
+        self.assertEqual([item["name"] for item in first["interests"]], ["Estadio Ciudad de Vicente López"])
+
+        status, second = response_for(raw, DISABLED)
+        self.assertEqual(status, 200)
+        self.assertIn("Plaza de Mayo", second["reply"])
+        self.assertNotIn("Platense", second["reply"])
+
+    def test_a_danger_area_does_not_replace_the_place(self):
+        raw = json.dumps(
+            context_body(
+                areas=[
+                    {
+                        "name": "Villa",
+                        "category": "danger",
+                        "description": "Estás entrando a una zona marcada.",
+                        "latitude": -34.6,
+                        "longitude": -58.38,
+                    }
+                ]
+            )
+        ).encode()
+        status, body = response_for(raw, DISABLED)
+        self.assertEqual(status, 200)
+        self.assertIn("Plaza de Mayo", body["reply"])
+        self.assertNotIn("zona marcada", body["reply"])
+
+    def test_a_broken_custom_area_does_not_drop_the_place(self):
+        parsed = parse_context(
+            context_body(areas=["no", {"name": "Estadio", "category": "custom-area"}])
+        )
+        self.assertEqual(parsed.areas, [])
+        status, body = response_for(
+            json.dumps(context_body(areas=["no", {"category": "custom-area"}])).encode(),
+            DISABLED,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("Plaza de Mayo", body["reply"])
+
     def test_reply_mentions_the_place_and_direction(self):
         status, body = response_for(json.dumps(context_body()).encode(), DISABLED)
         self.assertEqual(status, 200)

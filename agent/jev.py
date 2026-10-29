@@ -28,7 +28,8 @@ CRITERIA_TRUE = (
     "sitio histórico, biblioteca, cementerio histórico o similar, "
     "o `in_curated_base` es verdadero porque la guía lo eligió como sitio para contar, "
     "Y NO aparece en la lista de recent_history. "
-    "Si la categoría o el nombre sugieren un lugar cultural o turístico, respondé true aunque no sea icónico."
+    "Si la categoría o el nombre sugieren un lugar cultural o turístico, respondé true aunque no sea icónico. "
+    "Si `poi_category` es `custom-area`, es una zona elegida para contar: respondé true salvo que ya esté en recent_history."
 )
 CRITERIA_FALSE = (
     "El lugar es claramente un negocio de uso cotidiano: farmacia, cajero, kiosco, supermercado, "
@@ -55,6 +56,7 @@ TOURIST_CATEGORIES = frozenset({
     "place_of_worship",
     "plaza",
     "stadium",
+    "custom-area",
     "synagogue",
     "tourist_attraction",
     "university",
