@@ -11,7 +11,7 @@ from agent.deadline import Deadline
 from agent.graph import build_guide, build_reply, compile_graph
 from agent.web_context import WebPassage, match_score, pick_page
 from agent.history import SHARED_MEMORY, MentionMemory
-from agent.jev import build_request
+from agent.jev import CRITERIA_FALSE, CRITERIA_TRUE, build_request, simulate_noul
 from agent.retrieve import KNOWLEDGE_DIR, load_index, read_knowledge, search_history
 from agent.server import body_length_error, response_for
 from agent.settings import settings_from
@@ -339,6 +339,37 @@ class GraphTests(unittest.TestCase):
         self.assertIn("criteria", question)
         self.assertIn("true", question["criteria"])
         self.assertIn("false", question["criteria"])
+        self.assertIn("no una empresa", CRITERIA_TRUE)
+        self.assertIn("vista de pájaros", CRITERIA_FALSE)
+
+    def test_scenic_business_name_is_not_a_place_to_narrate(self):
+        agency = simulate_noul(
+            {
+                "poi_name": "Vista de Pájaros",
+                "poi_category": "tourist_attraction",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        office = simulate_noul(
+            {
+                "poi_name": "Agencia de viajes Salvajes",
+                "poi_category": "tourist_attraction",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        lookout = simulate_noul(
+            {
+                "poi_name": "Mirador de los Pájaros",
+                "poi_category": "tourist_attraction",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        self.assertLess(agency, DISABLED.jev_threshold)
+        self.assertLess(office, 0.1)
+        self.assertGreater(lookout, DISABLED.jev_threshold)
 
     def test_pharmacy_ends_before_the_guide_node(self):
         graph = compile_graph(DISABLED)

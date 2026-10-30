@@ -19,23 +19,30 @@ QUESTION_ID = "should_speak"
 MAX_RESPONSE_BYTES = 32_768
 
 INSTRUCTIONS = (
-    "¿Es este un punto de interés turístico o cultural sobre el cual el usuario aún no ha escuchado? "
-    "Preferí aceptar lugares visitables aunque no sean famosos."
+    "¿El pin es el lugar en sí, un sitio que la persona puede ver o visitar, y todavía no lo escuchó? "
+    "No alcanza con que el mapa lo marque como interés turístico ni con que el nombre suene a un paisaje o a una actividad."
 )
 CRITERIA_TRUE = (
-    "El lugar es o parece un sitio para visitar o conocer: monumento, museo, plaza, iglesia, templo, "
-    "parque, teatro, estadio, universidad, atracción turística, arquitectura notable, "
-    "sitio histórico, biblioteca, cementerio histórico o similar, "
-    "o `in_curated_base` es verdadero porque la guía lo eligió como sitio para contar, "
-    "Y NO aparece en la lista de recent_history. "
-    "Si la categoría o el nombre sugieren un lugar cultural o turístico, respondé true aunque no sea icónico. "
-    "Si `poi_category` es `custom-area`, es una zona elegida para contar: respondé true salvo que ya esté en recent_history."
+    "El pin es el sitio: se señala, se mira o se recorre. "
+    "Monumento, museo, plaza, iglesia, templo, parque, mirador o reserva que es el lugar, "
+    "teatro, estadio, universidad, arquitectura notable, sitio histórico, biblioteca, "
+    "cementerio histórico o similar. El nombre nombra ese sitio, no una empresa. "
+    "Un lugar chico o poco famoso sigue siendo true si es el sitio. "
+    "También true si `in_curated_base` es verdadero, o si `poi_category` es `custom-area`: "
+    "la guía ya lo eligió para contar. En esos casos, false solo si ya está en recent_history."
 )
 CRITERIA_FALSE = (
-    "El lugar es claramente un negocio de uso cotidiano: farmacia, cajero, kiosco, supermercado, "
-    "banco, estacionamiento, lavandería, consultorio, hotel genérico, bar o restaurante común "
-    "sin valor turístico, Y `in_curated_base` es falso; O ya aparece en el recent_history. "
-    "Ante la duda entre un negocio común y un sitio cultural, preferí true."
+    "El pin es el local, la oficina, la casa o la sede de un negocio, aunque el mapa lo marque "
+    "como interés turístico (`tourist_attraction`, `point_of_interest` u otra categoría parecida) "
+    "y aunque el nombre describa una actividad, un paisaje o un animal. "
+    "Agencia de viajes, operador de tours, vendedor de excursiones o experiencias: "
+    "el nombre puede decir 'vista de pájaros', 'safari' o 'aventura' y el pin igual es el negocio, "
+    "no el lugar donde eso ocurre. "
+    "También false si es un negocio de uso cotidiano (farmacia, cajero, kiosco, supermercado, banco, "
+    "estacionamiento, lavandería, consultorio, hotel genérico, bar o restaurante común) "
+    "y `in_curated_base` es falso, o si ya aparece en recent_history. "
+    "Si el nombre puede ser tanto un sitio público como la marca de quien vende esa experiencia, "
+    "y no nombra un lugar (mirador, reserva, parque, museo, plaza, iglesia, monumento), respondé false."
 )
 
 TOURIST_CATEGORIES = frozenset({
@@ -58,7 +65,6 @@ TOURIST_CATEGORIES = frozenset({
     "stadium",
     "custom-area",
     "synagogue",
-    "tourist_attraction",
     "university",
     "zoo",
 })
@@ -84,8 +90,22 @@ COMMON_CATEGORIES = frozenset({
     "shopping_mall",
     "store",
     "supermarket",
+    "tour_agency",
+    "travel_agency",
 })
 COMMON_TOKENS = frozenset({"farmacia", "pharmacy", "cajero", "kiosco", "kiosk", "atm"})
+BUSINESS_TOKENS = frozenset({
+    "agencia",
+    "excursion",
+    "excursiones",
+    "oficina",
+    "oficinas",
+    "operador",
+    "operadores",
+    "tour",
+    "tours",
+    "viajes",
+})
 TOURIST_TOKENS = frozenset({
     "museo",
     "catedral",
@@ -106,6 +126,7 @@ TOURIST_TOKENS = frozenset({
     "torre",
     "puente",
     "galeria",
+    "mirador",
     "reserva",
 })
 
@@ -221,13 +242,17 @@ def read_noul(payload: object) -> float | None:
 
 
 def simulate_noul(state: JevState) -> float:
-    """Misma decisión que el criterio noul, para cuando no hay clave de Jev."""
+    """Misma decisión que el criterio noul, para cuando no hay clave de Jev.
+
+    `tourist_attraction` y `point_of_interest` no alcanzan: el mapa marca así
+    también oficinas y agencias con un nombre que suena a paisaje.
+    """
     if already_heard(state["poi_name"], state["recent_history"]):
         return 0.04
     if state["in_curated_base"]:
         return 0.95
     tokens = set(fold(state["poi_name"]).replace("-", " ").split())
-    if tokens & COMMON_TOKENS:
+    if tokens & (COMMON_TOKENS | BUSINESS_TOKENS):
         return 0.05
     category = state["poi_category"].strip().lower().replace(" ", "_")
     if category in COMMON_CATEGORIES:
