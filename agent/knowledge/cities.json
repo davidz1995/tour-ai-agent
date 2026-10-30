@@ -7,6 +7,11 @@
   {
     "id": "vicente-lopez",
     "name": "Vicente López",
-    "bbox": { "south": -34.555, "west": -58.548, "north": -34.488, "east": -58.465 }
+    "bbox": {
+      "south": -34.571637,
+      "west": -58.558475,
+      "north": -34.487788,
+      "east": -58.454681
+    }
   }
 ]
