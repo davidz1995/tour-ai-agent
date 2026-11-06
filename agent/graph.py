@@ -11,7 +11,7 @@ from agent.cluster import SiteCluster, cluster_interests, rank_place
 from agent.contract import Area, Context, Place
 from agent.deadline import Deadline
 from agent.history import SHARED_MEMORY, MentionMemory
-from agent.jev import JEV_TIMEOUT_SECONDS, already_heard, clean_jev_state, probability_of_true
+from agent.jev import JEV_TIMEOUT_SECONDS, already_heard, clean_jev_state, probability_of_true, repeats_place
 from agent.retrieve import HistoryIndex, distance_meters, load_index, looks_like_person_memorial
 from agent.settings import Settings
 from agent.situation import KNOWN_PLACES, Mention, analyze_situation, cardinal
@@ -81,6 +81,10 @@ def build_guide(
     mentions = guide_mentions(context, index)
     ranked = []
     person_checks = 0
+    accepted_names: list[str] = []
+    accepted_ids: set[str] = set()
+    remembered = ""
+    remembered_place: Place | None = None
     for mention in mentions:
         if budget.remaining() < GUIDE_RESERVE_SECONDS:
             break
@@ -93,10 +97,18 @@ def build_guide(
         if figure is not None:
             description = figure.text
             curated = True
+            identity = f"figure:{figure.name}"
         else:
             document = index.search(mention.place)
             description = document.text if document is not None else ""
             curated = document is not None
+            identity = f"doc:{document.id}" if document is not None else ""
+        duplicate = _is_repeated(mention.place.name, history, accepted_names, identity, accepted_ids)
+        if duplicate and speak and repeats_place(mention.place.name, history) and not remembered:
+            cached = store.script_for(user_id, [mention.place.name, *history])
+            if cached:
+                remembered = cached
+                remembered_place = mention.place
         state = initial_state(
             latitude=situation.origin.latitude,
             longitude=situation.origin.longitude,
@@ -106,21 +118,23 @@ def build_guide(
             source="local" if curated else "",
             place_latitude=mention.place.latitude,
             place_longitude=mention.place.longitude,
-            recent_history=[],
+            recent_history=[*history, *accepted_names],
+            is_duplicate=duplicate,
         )
         if not evaluate(state, settings, budget)["should_trigger"]:
             continue
         ranked.append(rank_place(mention.place, description, curated))
+        accepted_names.append(mention.place.name)
+        if identity:
+            accepted_ids.add(identity)
 
     clusters = cluster_interests(ranked)
     interests = tuple(cluster.primary for cluster in clusters)
     if not clusters:
-        return GuideResult("", None, ())
+        return GuideResult("", None, (), remembered, remembered_place)
 
     spoken: Place | None = None
     reply = ""
-    remembered = ""
-    remembered_place: Place | None = None
     if speak:
         for cluster in clusters:
             if site_already_heard(cluster, history):
@@ -140,6 +154,11 @@ def build_guide(
             spoken = cluster.primary
             reply = script
             break
+    if speak:
+        known = store.recent(user_id)
+        for name in accepted_names:
+            if not already_heard(name, known):
+                store.remember(user_id, name, "")
     return GuideResult(reply, spoken, interests, remembered, remembered_place)
 
 
@@ -216,6 +235,18 @@ def spoken_custom_area(store: MentionMemory, user_id: str, area: Area) -> GuideR
     return GuideResult(area.description, place, (place,))
 
 
+def _is_repeated(
+    name: str,
+    history: list[str],
+    accepted_names: list[str],
+    identity: str,
+    accepted_ids: set[str],
+) -> bool:
+    if repeats_place(name, [*history, *accepted_names]):
+        return True
+    return bool(identity) and identity in accepted_ids
+
+
 def site_already_heard(cluster: SiteCluster, history: list[str]) -> bool:
     return any(already_heard(name, history) for name in cluster.names())
 
@@ -262,6 +293,7 @@ def evaluate(state: GuideState, settings: Settings, deadline: Deadline) -> dict[
         poi["category"],
         state["recent_history"],
         in_curated_base=poi["source"] == "local",
+        is_duplicate=bool(state.get("is_duplicate", False)),
     )
     timeout = deadline.timeout_for(JEV_TIMEOUT_SECONDS, reserve=GUIDE_RESERVE_SECONDS)
     confidence = probability_of_true(jev_state, settings, timeout)
@@ -313,6 +345,7 @@ def initial_state(
     place_latitude: float,
     place_longitude: float,
     recent_history: list[str],
+    is_duplicate: bool = False,
 ) -> GuideState:
     return {
         "user_location": {"latitude": latitude, "longitude": longitude},
@@ -325,6 +358,7 @@ def initial_state(
             "longitude": place_longitude,
         },
         "recent_history": list(recent_history),
+        "is_duplicate": is_duplicate,
         "jev_confidence": 0.0,
         "should_trigger": False,
         "final_audio_script": "",

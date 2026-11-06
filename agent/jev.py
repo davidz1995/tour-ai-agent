@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from typing import Literal, TypedDict
 
-from agent.retrieve import looks_like_person_memorial
+from agent.retrieve import looks_like_person_memorial, tokens
 from agent.settings import Settings
 from agent.situation import fold
 
@@ -24,7 +24,8 @@ INSTRUCTIONS = (
     "No alcanza con que el mapa lo marque como interés turístico ni con que el nombre suene a un paisaje o a una actividad. "
     "Si el pin es una persona, una tumba o una bóveda, no alcanza con que se pueda mirar: "
     "tiene que ser alguien que casi cualquiera reconocería. "
-    "Si `place_kind` es `museum` o `worship`, seguí esa regla y no la categoría del mapa."
+    "Si `place_kind` es `museum` o `worship`, seguí esa regla y no la categoría del mapa. "
+    "Si `is_duplicate` es verdadero, el mapa repitió el mismo lugar y no se vuelve a marcar."
 )
 CRITERIA_TRUE = (
     "El pin es el sitio: se señala, se mira o se recorre. "
@@ -41,7 +42,8 @@ CRITERIA_TRUE = (
     "es una figura pública que casi cualquiera reconocería en su país. Eva Perón, Evita, es true. "
     "La bóveda de la familia Duarte también es true, porque ahí está Eva Perón. "
     "También true si `in_curated_base` es verdadero, o si `poi_category` es `custom-area`: "
-    "la guía ya lo eligió para contar. En esos casos, false solo si ya está en recent_history."
+    "la guía ya lo eligió para contar. En esos casos, false si ya está en recent_history "
+    "o si `is_duplicate` es verdadero."
 )
 CRITERIA_FALSE = (
     "El pin es el local, la oficina, la casa o la sede de un negocio, aunque el mapa lo marque "
@@ -60,7 +62,10 @@ CRITERIA_FALSE = (
     "aunque el mapa diga church, place_of_worship o point_of_interest. "
     "Que el nombre diga iglesia no lo vuelve turístico. "
     "False también si es la tumba, el sepulcro, el mausoleo o la bóveda de una familia o de alguien "
-    "que un visitante no reconocería, aunque el mapa lo marque como sitio histórico, y `in_curated_base` es falso."
+    "que un visitante no reconocería, aunque el mapa lo marque como sitio histórico, y `in_curated_base` es falso. "
+    "False si `is_duplicate` es verdadero: es el mismo lugar en otro pin o con un nombre casi igual, "
+    "aunque esté en otro punto del predio y aunque `in_curated_base` sea verdadero. "
+    "Cementerio de la Recoleta y Cementerio Recoleta son el mismo sitio."
 )
 
 TOURIST_CATEGORIES = frozenset({
@@ -171,6 +176,7 @@ class JevState(TypedDict):
     poi_category: str
     place_kind: str
     in_curated_base: bool
+    is_duplicate: bool
     recent_history: list[str]
 
 
@@ -223,6 +229,7 @@ def build_request(state: JevState) -> JevRequest:
             "poi_category": state["poi_category"],
             "place_kind": place_kind_for(state["poi_name"], state["poi_category"]),
             "in_curated_base": state["in_curated_base"],
+            "is_duplicate": bool(state.get("is_duplicate", False)),
             "recent_history": list(state["recent_history"]),
         },
         "questions": {
@@ -236,6 +243,8 @@ def build_request(state: JevState) -> JevRequest:
 
 
 def probability_of_true(state: JevState, settings: Settings, timeout: float | None = JEV_TIMEOUT_SECONDS) -> float:
+    if state.get("is_duplicate"):
+        return 0.04
     if settings.jev_key and timeout is not None:
         remote = ask_remote(state, settings, timeout)
         if remote is not None:
@@ -299,7 +308,7 @@ def simulate_noul(state: JevState) -> float:
     `tourist_attraction` y `point_of_interest` no alcanzan: el mapa marca así
     también oficinas y agencias con un nombre que suena a paisaje.
     """
-    if already_heard(state["poi_name"], state["recent_history"]):
+    if state.get("is_duplicate") or already_heard(state["poi_name"], state["recent_history"]):
         return 0.04
     if state["in_curated_base"]:
         return 0.95
@@ -330,7 +339,23 @@ def already_heard(name: str, history: list[str]) -> bool:
     return any(fold(item).strip() == folded for item in history)
 
 
-def clean_jev_state(name: str, category: str, history: list[str], in_curated_base: bool = False) -> JevState:
+def repeats_place(name: str, others: list[str]) -> bool:
+    """El mismo sitio aunque el mapa cambie una palabra vacía o lo ponga en otro punto."""
+    if already_heard(name, others):
+        return True
+    own = set(tokens(name))
+    if len(own) < 2:
+        return False
+    return any(set(tokens(other)) == own for other in others)
+
+
+def clean_jev_state(
+    name: str,
+    category: str,
+    history: list[str],
+    in_curated_base: bool = False,
+    is_duplicate: bool = False,
+) -> JevState:
     names = [item.strip() for item in history if isinstance(item, str) and item.strip()]
     cleaned_name = name.strip()
     cleaned_category = category.strip()
@@ -339,5 +364,6 @@ def clean_jev_state(name: str, category: str, history: list[str], in_curated_bas
         "poi_category": cleaned_category,
         "place_kind": place_kind_for(cleaned_name, cleaned_category),
         "in_curated_base": in_curated_base,
+        "is_duplicate": is_duplicate,
         "recent_history": names[-5:],
     }

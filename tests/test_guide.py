@@ -310,6 +310,48 @@ class ContractTests(unittest.TestCase):
         self.assertIn("Museo de la Ciudad", response["reply"])
         self.assertNotIn("Iglesia", response["reply"])
 
+    def test_two_pins_of_recoleta_count_as_one_place(self):
+        places = [
+            {
+                "id": "recoleta-norte",
+                "name": "Cementerio de la Recoleta",
+                "latitude": -34.5872,
+                "longitude": -58.3925,
+                "category": "cemetery",
+                "distanceMeters": 40,
+            },
+            {
+                "id": "recoleta-sur",
+                "name": "Cementerio Recoleta",
+                "latitude": -34.5890,
+                "longitude": -58.3942,
+                "category": "cemetery",
+                "distanceMeters": 180,
+            },
+        ]
+        body = context_body(
+            location={"latitude": -34.5878, "longitude": -58.3930},
+            pointsOfInterest=places,
+        )
+        status, first = response_for(json.dumps(body).encode(), DISABLED)
+        names = [item["name"] for item in first["interests"]]
+        cemetery = [name for name in names if "ementerio" in name or "ecoleta" in name]
+        self.assertEqual(status, 200)
+        self.assertEqual(cemetery, ["Cementerio de la Recoleta"])
+
+        south_only = context_body(
+            location={"latitude": -34.5888, "longitude": -58.3940},
+            pointsOfInterest=[places[1]],
+        )
+        status, second = response_for(json.dumps(south_only).encode(), DISABLED)
+        second_names = [item["name"] for item in second["interests"]]
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [name for name in second_names if "ementerio" in name or "ecoleta" in name],
+            [],
+        )
+        self.assertNotIn("1822", second.get("reply", ""))
+
     def test_recoleta_marks_evita_and_skips_unknown_tombs(self):
         places = [
             {
@@ -420,9 +462,10 @@ class GraphTests(unittest.TestCase):
         )
         self.assertEqual(
             set(request["state"]),
-            {"poi_name", "poi_category", "place_kind", "in_curated_base", "recent_history"},
+            {"poi_name", "poi_category", "place_kind", "in_curated_base", "is_duplicate", "recent_history"},
         )
         self.assertEqual(request["state"]["place_kind"], "site")
+        self.assertIs(request["state"]["is_duplicate"], False)
         self.assertIs(request["state"]["in_curated_base"], True)
         question = request["questions"]["should_speak"]
         self.assertEqual(question["type"], "noul")
@@ -434,6 +477,7 @@ class GraphTests(unittest.TestCase):
         self.assertIn("Eva Perón", CRITERIA_TRUE)
         self.assertIn("vista de pájaros", CRITERIA_FALSE)
         self.assertIn("no reconocería", CRITERIA_FALSE)
+        self.assertIn("is_duplicate", CRITERIA_FALSE)
 
     def test_scenic_business_name_is_not_a_place_to_narrate(self):
         agency = simulate_noul(
