@@ -40,17 +40,30 @@ GUIDE_SYSTEM_PROMPT = (
     "- Variá el arranque, pero siempre con el nombre exacto del lugar.\n"
     "\n"
     "Reglas:\n"
-    "1. El nombre exacto del campo place tiene que aparecer tal cual en el relato. "
-    "No lo cambies, no lo alargues y no uses otro nombre aunque el contexto histórico "
-    "diga distinto. La persona puede ir con el teléfono guardado.\n"
+    "1. El nombre exacto del campo place tiene que aparecer tal cual. "
+    "No lo cambies ni lo alargues. Si el dato histórico nombra otro lugar, "
+    "ese otro nombre se queda en esos hechos: no se lo pases a place ni reemplaces uno por el otro. "
+    "Una tumba, una bóveda o una persona no es el cementerio, la iglesia o el museo que la contiene.\n"
     "2. Oraciones cortas y fáciles de escuchar caminando.\n"
     "3. Máximo 3 oraciones. Mejor corto que largo.\n"
     "4. Sin Markdown, emojis, viñetas ni signos de exclamación de más.\n"
-    "5. Usá solo el dato histórico del mensaje. Si no hay, no inventes fechas ni episodios.\n"
-    "6. Si hay zones, son partes del mismo sitio. Contá el lugar y después "
-    "mencioná esas zonas en una sola oración. No digas que son lugares distintos.\n"
+    "5. Usá solo un hecho que el dato histórico diga de ese mismo lugar. "
+    "Si no hay dato sobre place, no inventes fechas, episodios ni qué tipo de lugar es. "
+    "La categoría del mapa no alcanza para afirmarlo.\n"
+    "6. Si hay zones, están en el mismo predio. place es el lugar principal y cada zona "
+    "conserva su propio nombre. No conviertas una zona en el lugar ni el lugar en la zona.\n"
     "7. No saludes, no te presentes y no digas que sos una IA o un guía."
 )
+
+# La categoría del mapa a veces nombra el predio, no el pin.
+_CATEGORY_WORDS = {
+    "cemetery": frozenset({"cementerio"}),
+    "church": frozenset({"iglesia", "catedral", "basilica", "parroquia", "capilla"}),
+    "place_of_worship": frozenset({"iglesia", "catedral", "basilica", "parroquia", "templo", "mezquita", "sinagoga"}),
+    "museum": frozenset({"museo", "museum"}),
+    "park": frozenset({"parque"}),
+    "plaza": frozenset({"plaza"}),
+}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -70,6 +83,7 @@ def write_script(
     zones: tuple[str, ...] | list[str] = (),
 ) -> str:
     name = name.strip()
+    category = category_for_speech(name, category)
     description = description.strip()
     zone_list = [zone.strip() for zone in zones if isinstance(zone, str) and zone.strip()]
     if settings.model_enabled and settings.model_base_url and timeout is not None:
@@ -96,31 +110,34 @@ def request_guide(
     timeout: float = GUIDE_TIMEOUT_SECONDS,
     zones: list[str] | None = None,
 ) -> str | None:
-    payload_user = {
-        "place": name,
-        "category": category,
-        "historicalContext": description,
-    }
+    payload_user: dict[str, object] = {"place": name, "historicalContext": description}
+    if category:
+        payload_user["category"] = category
     if zones:
         payload_user["zones"] = zones
     user = json.dumps(payload_user, ensure_ascii=False)
     user += (
         "\nContalo con cercanía y brevedad, como un amigo que señala el lugar. "
         "Hechos concretos, sin energías ni sensaciones místicas. "
-        f"Usá exactamente este nombre y ningún otro: {name}."
+        f"El nombre de place tiene que aparecer tal cual: {name}. No lo reemplaces por otro."
     )
     if description:
         user += (
-            "\nUsá solo ese dato histórico. Si ahí aparece otro nombre del lugar, "
-            "ignorá ese nombre y usá solo el de place."
+            "\nEse dato se queda con el sitio del que habla. "
+            "Si nombra otro lugar, no digas que place es ese lugar."
         )
     else:
-        user += "\nNo hay dato histórico. No inventes fechas ni episodios; explicá qué es el lugar con naturalidad."
+        user += (
+            "\nNo hay dato histórico. No inventes fechas, episodios ni qué tipo de lugar es. "
+            "No afirmes que place es un cementerio, una iglesia o un museo si el nombre no lo dice."
+        )
     if zones:
-        user += "\nLas zones son partes del mismo lugar. Mencionalas juntas al final, con naturalidad."
+        user += (
+            "\nCada zona conserva su nombre. No la conviertas en el lugar principal ni al revés."
+        )
     payload = {
         "model": settings.model_name,
-        "temperature": 0.45,
+        "temperature": 0.2,
         "max_tokens": 200,
         "messages": [
             {"role": "system", "content": GUIDE_SYSTEM_PROMPT},
@@ -194,6 +211,18 @@ def for_speech(text: str) -> str:
         if len(lines) == MAX_LINES:
             break
     return clean_text(" ".join(lines), MAX_REPLY_CHARS)
+
+
+def category_for_speech(name: str, category: str) -> str:
+    """No le decimos al relato que una tumba es un cementerio porque el mapa marcó el predio."""
+    cleaned = category.strip()
+    words = _CATEGORY_WORDS.get(cleaned.lower().replace(" ", "_"))
+    if not words:
+        return cleaned
+    tokens = set(fold(name).replace("-", " ").split())
+    if tokens & words:
+        return cleaned
+    return ""
 
 
 def mentions_place(text: str, name: str) -> bool:

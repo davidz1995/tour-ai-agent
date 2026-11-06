@@ -15,10 +15,26 @@ from agent.situation import Situation, fold
 
 KNOWLEDGE_DIR = Path(__file__).resolve().parent / "knowledge"
 MAX_MATCH_METERS = 450
+FIGURE_PIN_METERS = 200
+PARENT_FIGURE_METERS = 280
 CITY_MARGIN_DEGREES = 0.01
 MAX_PLACE_FILE_BYTES = 65_536
 EARTH_RADIUS_METERS = 6_371_000
 STOPWORDS = frozenset({"de", "del", "la", "las", "el", "los", "y", "en", "the", "of"})
+PERSON_MEMORIAL_TOKENS = frozenset({
+    "tumba",
+    "sepulcro",
+    "sepultura",
+    "boveda",
+    "panteon",
+    "cripta",
+    "mausoleo",
+    "nicho",
+    "lapida",
+    "cenotafio",
+    "familia",
+    "familiar",
+})
 _TOKEN = re.compile(r"[a-z0-9]+")
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _LOCK = threading.Lock()
@@ -33,6 +49,15 @@ class Passage:
 
 
 @dataclass(frozen=True)
+class Figure:
+    name: str
+    aliases: tuple[str, ...]
+    text: str
+    latitude: float
+    longitude: float
+
+
+@dataclass(frozen=True)
 class Document:
     id: str
     city: str
@@ -41,6 +66,7 @@ class Document:
     latitude: float
     longitude: float
     text: str
+    figures: tuple[Figure, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,6 +118,42 @@ class HistoryIndex:
                     best = document
                     best_rank = rank
         return best
+
+    def figure_match(self, place: Place) -> Figure | None:
+        """Una figura curada solo si el pin está junto a su punto, no por un homónimo lejano."""
+        best: Figure | None = None
+        best_rank: tuple[int, float] | None = None
+        for city_id in self.cities_near(place.latitude, place.longitude):
+            for document in self.by_city.get(city_id, []):
+                for figure in document.figures:
+                    score = name_score(place.name, figure.aliases)
+                    if score <= 0:
+                        continue
+                    distance = distance_meters(
+                        place.latitude, place.longitude, figure.latitude, figure.longitude
+                    )
+                    if distance > FIGURE_PIN_METERS:
+                        continue
+                    rank = (score, -distance)
+                    if best_rank is None or rank > best_rank:
+                        best = figure
+                        best_rank = rank
+        return best
+
+    def figures_near(self, latitude: float, longitude: float) -> list[Figure]:
+        found: list[Figure] = []
+        seen: set[str] = set()
+        for city_id in self.cities_near(latitude, longitude):
+            for document in self.by_city.get(city_id, []):
+                distance = distance_meters(latitude, longitude, document.latitude, document.longitude)
+                if distance > PARENT_FIGURE_METERS:
+                    continue
+                for figure in document.figures:
+                    if figure.name in seen:
+                        continue
+                    seen.add(figure.name)
+                    found.append(figure)
+        return found
 
 
 def search_history(situation: Situation) -> list[Passage]:
@@ -224,6 +286,46 @@ def read_document(value: object, city_id: str) -> Document | None:
         latitude=float(latitude),
         longitude=float(longitude),
         text=" ".join(text.split()),
+        figures=read_figures(value.get("figures")),
+    )
+
+
+def read_figures(value: object) -> tuple[Figure, ...]:
+    if not isinstance(value, list):
+        return ()
+    figures: list[Figure] = []
+    for item in value:
+        figure = read_figure(item)
+        if figure is not None:
+            figures.append(figure)
+    return tuple(figures)
+
+
+def read_figure(value: object) -> Figure | None:
+    if not isinstance(value, dict):
+        return None
+    name = value.get("name")
+    text = value.get("text")
+    aliases = value.get("aliases")
+    latitude = value.get("latitude")
+    longitude = value.get("longitude")
+    if not isinstance(name, str) or not name.strip() or not isinstance(text, str) or not text.strip():
+        return None
+    if not isinstance(aliases, list) or not aliases:
+        return None
+    if not _is_number(latitude) or not _is_number(longitude):
+        return None
+    if not -90 <= float(latitude) <= 90 or not -180 <= float(longitude) <= 180:
+        return None
+    names = [alias.strip() for alias in aliases if isinstance(alias, str) and alias.strip()]
+    if not names:
+        return None
+    return Figure(
+        name=name.strip(),
+        aliases=tuple(names),
+        text=" ".join(text.split()),
+        latitude=float(latitude),
+        longitude=float(longitude),
     )
 
 
@@ -241,6 +343,10 @@ def name_score(place_name: str, aliases: tuple[str, ...]) -> int:
 
 def tokens(text: str) -> list[str]:
     return [token for token in _TOKEN.findall(fold(text)) if token not in STOPWORDS and len(token) >= 3]
+
+
+def looks_like_person_memorial(name: str) -> bool:
+    return bool(set(tokens(name)) & PERSON_MEMORIAL_TOKENS)
 
 
 def distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

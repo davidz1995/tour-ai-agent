@@ -12,13 +12,14 @@ from agent.contract import Area, Context, Place
 from agent.deadline import Deadline
 from agent.history import SHARED_MEMORY, MentionMemory
 from agent.jev import JEV_TIMEOUT_SECONDS, already_heard, clean_jev_state, probability_of_true
-from agent.retrieve import load_index
+from agent.retrieve import HistoryIndex, distance_meters, load_index, looks_like_person_memorial
 from agent.settings import Settings
-from agent.situation import analyze_situation
+from agent.situation import KNOWN_PLACES, Mention, analyze_situation, cardinal
 from agent.voice import EMPTY_REPLY, GUIDE_TIMEOUT_SECONDS, UNREADABLE_REPLY, write_script
 from agent.web_context import WIKI_TIMEOUT_SECONDS, lookup_web
 
 GUIDE_RESERVE_SECONDS = 1.0
+MAX_PERSON_CHECKS = 4
 
 
 class PoiData(TypedDict):
@@ -76,13 +77,26 @@ def build_guide(
     if not situation.mentions:
         reply = UNREADABLE_REPLY if situation.unreadable else EMPTY_REPLY
         return GuideResult(reply)
+    index = load_index()
+    mentions = guide_mentions(context, index)
     ranked = []
-    for mention in situation.mentions:
+    person_checks = 0
+    for mention in mentions:
         if budget.remaining() < GUIDE_RESERVE_SECONDS:
             break
-        document = load_index().search(mention.place)
-        description = document.text if document is not None else ""
-        curated = document is not None
+        figure = index.figure_match(mention.place)
+        memorial = figure is None and looks_like_person_memorial(mention.place.name)
+        if memorial:
+            if person_checks >= MAX_PERSON_CHECKS:
+                continue
+            person_checks += 1
+        if figure is not None:
+            description = figure.text
+            curated = True
+        else:
+            document = index.search(mention.place)
+            description = document.text if document is not None else ""
+            curated = document is not None
         state = initial_state(
             latitude=situation.origin.latitude,
             longitude=situation.origin.longitude,
@@ -127,6 +141,51 @@ def build_guide(
             reply = script
             break
     return GuideResult(reply, spoken, interests, remembered, remembered_place)
+
+
+def guide_mentions(context: Context, index: HistoryIndex) -> list[Mention]:
+    """El lugar entra aunque no sea de los más cercanos. Una figura curada también, aunque el mapa no la mande."""
+    places = sorted(context.places, key=lambda place: (place.distance_meters, place.name))
+    chosen: list[Place] = places[:KNOWN_PLACES]
+    seen = {id(place) for place in chosen}
+    for place in places:
+        if id(place) in seen or looks_like_person_memorial(place.name):
+            continue
+        chosen.append(place)
+        seen.add(id(place))
+    origin = context.location
+    mentions = [Mention(place, cardinal(origin, place)) for place in chosen]
+    covered = {
+        figure.name
+        for mention in mentions
+        if (figure := index.figure_match(mention.place)) is not None
+    }
+    for figure in index.figures_near(origin.latitude, origin.longitude):
+        if figure.name in covered:
+            continue
+        place = Place(
+            name=figure.name,
+            category="historical_landmark",
+            distance_meters=distance_meters(
+                origin.latitude, origin.longitude, figure.latitude, figure.longitude
+            ),
+            latitude=figure.latitude,
+            longitude=figure.longitude,
+        )
+        mentions.append(Mention(place, cardinal(origin, place)))
+        covered.add(figure.name)
+    mentions.sort(key=lambda mention: mention_rank(mention, index))
+    return mentions
+
+
+def mention_rank(mention: Mention, index: HistoryIndex) -> tuple[int, float, str]:
+    if index.figure_match(mention.place) is not None:
+        group = 0
+    elif looks_like_person_memorial(mention.place.name):
+        group = 2
+    else:
+        group = 1
+    return (group, mention.place.distance_meters, mention.place.name)
 
 
 CUSTOM_AREA = "custom-area"

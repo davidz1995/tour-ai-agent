@@ -7,5 +7,26 @@
   ],
   "latitude": -34.5875,
   "longitude": -58.393056,
-  "text": "Se abrió en 1822 junto al convento de los recoletos, y entre sus bóvedas está el mausoleo de Eva Perón."
+  "text": "Se abrió en 1822 junto al convento de los recoletos, y entre sus bóvedas está el mausoleo de Eva Perón.",
+  "figures": [
+    {
+      "name": "Eva Perón",
+      "aliases": [
+        "Eva Perón",
+        "Evita",
+        "Eva Duarte",
+        "Eva Duarte de Perón",
+        "María Eva Duarte de Perón",
+        "Familia Duarte",
+        "Bóveda Duarte",
+        "Bóveda de la familia Duarte",
+        "Mausoleo de Eva Perón",
+        "Tumba de Eva Perón",
+        "Duarte"
+      ],
+      "latitude": -34.58834,
+      "longitude": -58.39371,
+      "text": "Es Evita: su cuerpo está en la bóveda de la familia Duarte y es una de las más visitadas de la Argentina."
+    }
+  ]
 }

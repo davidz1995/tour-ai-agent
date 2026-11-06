@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from typing import Literal, TypedDict
 
+from agent.retrieve import looks_like_person_memorial
 from agent.settings import Settings
 from agent.situation import fold
 
@@ -20,14 +21,25 @@ MAX_RESPONSE_BYTES = 32_768
 
 INSTRUCTIONS = (
     "¿El pin es el lugar en sí, un sitio que la persona puede ver o visitar, y todavía no lo escuchó? "
-    "No alcanza con que el mapa lo marque como interés turístico ni con que el nombre suene a un paisaje o a una actividad."
+    "No alcanza con que el mapa lo marque como interés turístico ni con que el nombre suene a un paisaje o a una actividad. "
+    "Si el pin es una persona, una tumba o una bóveda, no alcanza con que se pueda mirar: "
+    "tiene que ser alguien que casi cualquiera reconocería. "
+    "Si `place_kind` es `museum` o `worship`, seguí esa regla y no la categoría del mapa."
 )
 CRITERIA_TRUE = (
     "El pin es el sitio: se señala, se mira o se recorre. "
-    "Monumento, museo, plaza, iglesia, templo, parque, mirador o reserva que es el lugar, "
+    "Monumento, museo, plaza, parque, mirador o reserva que es el lugar, "
     "teatro, estadio, universidad, arquitectura notable, sitio histórico, biblioteca, "
     "cementerio histórico o similar. El nombre nombra ese sitio, no una empresa. "
-    "Un lugar chico o poco famoso sigue siendo true si es el sitio. "
+    "Un lugar chico o poco famoso sigue siendo true si es el sitio, no es una persona "
+    "y `place_kind` no es `worship`. "
+    "Si `place_kind` es `museum`, es true: el nombre dice museo o la categoría es museum. "
+    "Si `place_kind` es `worship`, es true solo cuando el edificio tiene belleza física "
+    "para quien pasa: una catedral, una basílica, una fachada o un interior que la gente visita por verlo. "
+    "Una iglesia católica linda cuenta. "
+    "Una tumba, un sepulcro, un mausoleo, una bóveda o una persona es true solo si esa persona "
+    "es una figura pública que casi cualquiera reconocería en su país. Eva Perón, Evita, es true. "
+    "La bóveda de la familia Duarte también es true, porque ahí está Eva Perón. "
     "También true si `in_curated_base` es verdadero, o si `poi_category` es `custom-area`: "
     "la guía ya lo eligió para contar. En esos casos, false solo si ya está en recent_history."
 )
@@ -42,7 +54,13 @@ CRITERIA_FALSE = (
     "estacionamiento, lavandería, consultorio, hotel genérico, bar o restaurante común) "
     "y `in_curated_base` es falso, o si ya aparece en recent_history. "
     "Si el nombre puede ser tanto un sitio público como la marca de quien vende esa experiencia, "
-    "y no nombra un lugar (mirador, reserva, parque, museo, plaza, iglesia, monumento), respondé false."
+    "y no nombra un lugar (mirador, reserva, parque, museo, plaza, monumento), respondé false. "
+    "Si `place_kind` es `worship`, false cuando es un templo o una iglesia cualquiera: "
+    "un salón, una casa, un local o un edificio común de una congregación cristiana o de otra religión, "
+    "aunque el mapa diga church, place_of_worship o point_of_interest. "
+    "Que el nombre diga iglesia no lo vuelve turístico. "
+    "False también si es la tumba, el sepulcro, el mausoleo o la bóveda de una familia o de alguien "
+    "que un visitante no reconocería, aunque el mapa lo marque como sitio histórico, y `in_curated_base` es falso."
 )
 
 TOURIST_CATEGORIES = frozenset({
@@ -50,21 +68,17 @@ TOURIST_CATEGORIES = frozenset({
     "aquarium",
     "art_gallery",
     "cemetery",
-    "church",
     "city_hall",
     "courthouse",
     "hindu_temple",
     "historical_landmark",
     "library",
     "monument",
-    "mosque",
     "museum",
     "park",
-    "place_of_worship",
     "plaza",
     "stadium",
     "custom-area",
-    "synagogue",
     "university",
     "zoo",
 })
@@ -106,10 +120,31 @@ BUSINESS_TOKENS = frozenset({
     "tours",
     "viajes",
 })
+MUSEUM_TOKENS = frozenset({"museo", "museum"})
+WORSHIP_CATEGORIES = frozenset({
+    "church",
+    "place_of_worship",
+    "mosque",
+    "synagogue",
+    "hindu_temple",
+})
+WORSHIP_TOKENS = frozenset({
+    "iglesia",
+    "templo",
+    "parroquia",
+    "catedral",
+    "basilica",
+    "mezquita",
+    "sinagoga",
+    "abadia",
+    "convento",
+    "monasterio",
+    "capilla",
+})
+NOTABLE_WORSHIP_TOKENS = frozenset({"catedral", "basilica", "abadia", "monasterio", "convento"})
 TOURIST_TOKENS = frozenset({
     "museo",
     "catedral",
-    "iglesia",
     "basilica",
     "monumento",
     "cabildo",
@@ -134,6 +169,7 @@ TOURIST_TOKENS = frozenset({
 class JevState(TypedDict):
     poi_name: str
     poi_category: str
+    place_kind: str
     in_curated_base: bool
     recent_history: list[str]
 
@@ -163,6 +199,21 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+def name_tokens(name: str) -> set[str]:
+    return set(fold(name).replace("-", " ").split())
+
+
+def place_kind_for(name: str, category: str) -> str:
+    """museum, worship o site. Jev usa este campo para no fiarse solo de la categoría del mapa."""
+    tokens = name_tokens(name)
+    category_key = category.strip().lower().replace(" ", "_")
+    if category_key == "museum" or tokens & MUSEUM_TOKENS:
+        return "museum"
+    if category_key in WORSHIP_CATEGORIES or tokens & WORSHIP_TOKENS:
+        return "worship"
+    return "site"
+
+
 def build_request(state: JevState) -> JevRequest:
     """La API identifica cada pregunta por su clave. No es un array."""
     return {
@@ -170,6 +221,7 @@ def build_request(state: JevState) -> JevRequest:
         "state": {
             "poi_name": state["poi_name"],
             "poi_category": state["poi_category"],
+            "place_kind": place_kind_for(state["poi_name"], state["poi_category"]),
             "in_curated_base": state["in_curated_base"],
             "recent_history": list(state["recent_history"]),
         },
@@ -251,7 +303,16 @@ def simulate_noul(state: JevState) -> float:
         return 0.04
     if state["in_curated_base"]:
         return 0.95
-    tokens = set(fold(state["poi_name"]).replace("-", " ").split())
+    kind = place_kind_for(state["poi_name"], state["poi_category"])
+    if kind == "museum":
+        return 0.93
+    if looks_like_person_memorial(state["poi_name"]):
+        return 0.12
+    if kind == "worship":
+        if name_tokens(state["poi_name"]) & NOTABLE_WORSHIP_TOKENS:
+            return 0.93
+        return 0.18
+    tokens = name_tokens(state["poi_name"])
     if tokens & (COMMON_TOKENS | BUSINESS_TOKENS):
         return 0.05
     category = state["poi_category"].strip().lower().replace(" ", "_")
@@ -271,9 +332,12 @@ def already_heard(name: str, history: list[str]) -> bool:
 
 def clean_jev_state(name: str, category: str, history: list[str], in_curated_base: bool = False) -> JevState:
     names = [item.strip() for item in history if isinstance(item, str) and item.strip()]
+    cleaned_name = name.strip()
+    cleaned_category = category.strip()
     return {
-        "poi_name": name.strip(),
-        "poi_category": category.strip(),
+        "poi_name": cleaned_name,
+        "poi_category": cleaned_category,
+        "place_kind": place_kind_for(cleaned_name, cleaned_category),
         "in_curated_base": in_curated_base,
         "recent_history": names[-5:],
     }

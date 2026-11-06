@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.contract import Place
-from agent.retrieve import distance_meters, tokens
+from agent.retrieve import PERSON_MEMORIAL_TOKENS, distance_meters, looks_like_person_memorial, tokens
 from agent.situation import fold
 
 # Distancia máxima entre pines que pueden ser el mismo sitio.
@@ -137,12 +137,12 @@ def same_site(left: Place, right: Place) -> bool:
     left_tokens = set(tokens(left.name))
     right_tokens = set(tokens(right.name))
     shared = left_tokens & right_tokens
-    shared_meaningful = shared - AMENITY_TOKENS
+    shared_meaningful = shared - AMENITY_TOKENS - PERSON_MEMORIAL_TOKENS
     if shared_meaningful:
         return True
+    if looks_like_person_memorial(left.name) or looks_like_person_memorial(right.name):
+        return False
     if looks_like_amenity(left.name) or looks_like_amenity(right.name):
-        return True
-    if category_of(left) in SITE_CATEGORIES and category_of(right) in SITE_CATEGORIES:
         return True
     return False
 

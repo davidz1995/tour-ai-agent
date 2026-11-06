@@ -16,7 +16,7 @@ from agent.retrieve import KNOWLEDGE_DIR, load_index, read_knowledge, search_his
 from agent.server import body_length_error, response_for
 from agent.settings import settings_from
 from agent.situation import analyze_situation
-from agent.voice import ensure_place_name, mentions_place
+from agent.voice import GUIDE_SYSTEM_PROMPT, category_for_speech, ensure_place_name, mentions_place
 
 DISABLED = settings_from({"MODEL_API_KEY": "", "MODEL_BASE_URL": "https://api.openai.com/v1", "MODEL_NAME": "gpt-4o-mini"})
 
@@ -280,6 +280,75 @@ class ContractTests(unittest.TestCase):
         parsed = parse_context(context_body(pointsOfInterest=places))
         self.assertEqual([place.name for place in parsed.places], ["Plaza de Mayo"])
 
+    def test_a_named_museum_is_marked_and_a_plain_church_is_not(self):
+        places = [
+            {
+                "id": "iglesia",
+                "name": "Iglesia Cristiana del Barrio",
+                "latitude": -31.4201,
+                "longitude": -64.1801,
+                "category": "church",
+                "distanceMeters": 20,
+            },
+            {
+                "id": "museo",
+                "name": "Museo de la Ciudad",
+                "latitude": -31.4204,
+                "longitude": -64.1804,
+                "category": "point_of_interest",
+                "distanceMeters": 50,
+            },
+        ]
+        body = context_body(
+            location={"latitude": -31.42, "longitude": -64.18},
+            pointsOfInterest=places,
+        )
+        status, response = response_for(json.dumps(body).encode(), DISABLED)
+        names = [item["name"] for item in response["interests"]]
+        self.assertEqual(status, 200)
+        self.assertEqual(names, ["Museo de la Ciudad"])
+        self.assertIn("Museo de la Ciudad", response["reply"])
+        self.assertNotIn("Iglesia", response["reply"])
+
+    def test_recoleta_marks_evita_and_skips_unknown_tombs(self):
+        places = [
+            {
+                "id": "juan",
+                "name": "Tumba de Juan Pérez",
+                "latitude": -34.58775,
+                "longitude": -58.39305,
+                "category": "historical_landmark",
+                "distanceMeters": 12,
+            },
+            {
+                "id": "pedro",
+                "name": "Sepulcro de Pedro Gómez",
+                "latitude": -34.58785,
+                "longitude": -58.3931,
+                "category": "historical_landmark",
+                "distanceMeters": 20,
+            },
+            {
+                "id": "familia",
+                "name": "Bóveda de la familia Álvarez",
+                "latitude": -34.5879,
+                "longitude": -58.39315,
+                "category": "point_of_interest",
+                "distanceMeters": 28,
+            },
+        ]
+        body = context_body(
+            location={"latitude": -34.5878, "longitude": -58.393},
+            pointsOfInterest=places,
+        )
+        status, response = response_for(json.dumps(body).encode(), DISABLED)
+        names = [item["name"] for item in response["interests"]]
+        self.assertEqual(status, 200)
+        self.assertIn("Eva Perón", names)
+        self.assertNotIn("Tumba de Juan Pérez", names)
+        self.assertNotIn("Pedro Gómez", response["reply"])
+        self.assertIn("Evita", response["reply"])
+
     def test_unreadable_places_still_get_a_reply(self):
         status, body = response_for(
             json.dumps(context_body(pointsOfInterest=[{"name": 1}])).encode(),
@@ -314,6 +383,26 @@ class ClusterTests(unittest.TestCase):
         clusters = cluster_interests([rank_place(plaza, "", False), rank_place(other, "", False)])
         self.assertEqual({cluster.primary.name for cluster in clusters}, {"Plaza San Martín", "Plaza Italia"})
 
+    def test_a_tomb_does_not_become_the_cemetery(self):
+        mitre = Place("Bartolomé Mitre", "cemetery", 20, -34.5878, -58.3932)
+        cemetery = Place("Cementerio de la Recoleta", "cemetery", 40, -34.5875, -58.393056)
+        clusters = cluster_interests(
+            [rank_place(mitre, "", False), rank_place(cemetery, "Se abrió en 1822.", True)]
+        )
+        self.assertEqual(
+            {cluster.primary.name for cluster in clusters},
+            {"Bartolomé Mitre", "Cementerio de la Recoleta"},
+        )
+
+    def test_distinct_tombs_do_not_become_one_site(self):
+        juan = Place("Tumba de Juan Pérez", "historical_landmark", 15, -34.5877, -58.3926)
+        pedro = Place("Sepulcro de Pedro Gómez", "historical_landmark", 25, -34.5878, -58.3927)
+        clusters = cluster_interests([rank_place(juan, "", False), rank_place(pedro, "", False)])
+        self.assertEqual(
+            {cluster.primary.name for cluster in clusters},
+            {"Tumba de Juan Pérez", "Sepulcro de Pedro Gómez"},
+        )
+
     def test_zone_label_reads_the_amenity(self):
         self.assertEqual(zone_label("Zona de entrenamiento Plaza San Martín"), "entrenamiento")
         self.assertEqual(zone_label("Área de mascotas"), "mascotas")
@@ -331,16 +420,20 @@ class GraphTests(unittest.TestCase):
         )
         self.assertEqual(
             set(request["state"]),
-            {"poi_name", "poi_category", "in_curated_base", "recent_history"},
+            {"poi_name", "poi_category", "place_kind", "in_curated_base", "recent_history"},
         )
+        self.assertEqual(request["state"]["place_kind"], "site")
         self.assertIs(request["state"]["in_curated_base"], True)
         question = request["questions"]["should_speak"]
         self.assertEqual(question["type"], "noul")
         self.assertIn("criteria", question)
         self.assertIn("true", question["criteria"])
         self.assertIn("false", question["criteria"])
+        self.assertIn("place_kind", CRITERIA_TRUE)
         self.assertIn("no una empresa", CRITERIA_TRUE)
+        self.assertIn("Eva Perón", CRITERIA_TRUE)
         self.assertIn("vista de pájaros", CRITERIA_FALSE)
+        self.assertIn("no reconocería", CRITERIA_FALSE)
 
     def test_scenic_business_name_is_not_a_place_to_narrate(self):
         agency = simulate_noul(
@@ -370,6 +463,91 @@ class GraphTests(unittest.TestCase):
         self.assertLess(agency, DISABLED.jev_threshold)
         self.assertLess(office, 0.1)
         self.assertGreater(lookout, DISABLED.jev_threshold)
+
+    def test_an_unknown_tomb_is_not_worth_telling(self):
+        tomb = simulate_noul(
+            {
+                "poi_name": "Tumba de Juan Pérez",
+                "poi_category": "historical_landmark",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        cemetery = simulate_noul(
+            {
+                "poi_name": "Cementerio de la Recoleta",
+                "poi_category": "cemetery",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        evita = simulate_noul(
+            {
+                "poi_name": "Tumba de Eva Perón",
+                "poi_category": "historical_landmark",
+                "in_curated_base": True,
+                "recent_history": [],
+            }
+        )
+        self.assertLess(tomb, DISABLED.jev_threshold)
+        self.assertGreater(cemetery, DISABLED.jev_threshold)
+        self.assertGreater(evita, DISABLED.jev_threshold)
+
+    def test_a_museum_name_passes_and_a_plain_church_does_not(self):
+        museum = simulate_noul(
+            {
+                "poi_name": "Museo de la Ciudad",
+                "poi_category": "point_of_interest",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        named_only_by_category = simulate_noul(
+            {
+                "poi_name": "MALBA",
+                "poi_category": "museum",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        chapel = simulate_noul(
+            {
+                "poi_name": "Iglesia Cristiana del Barrio",
+                "poi_category": "church",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        cathedral = simulate_noul(
+            {
+                "poi_name": "Catedral de Prueba",
+                "poi_category": "church",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        self.assertGreater(museum, DISABLED.jev_threshold)
+        self.assertGreater(named_only_by_category, DISABLED.jev_threshold)
+        self.assertLess(chapel, DISABLED.jev_threshold)
+        self.assertGreater(cathedral, DISABLED.jev_threshold)
+        museum_request = build_request(
+            {
+                "poi_name": "Museo de la Ciudad",
+                "poi_category": "point_of_interest",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        church_request = build_request(
+            {
+                "poi_name": "Iglesia Cristiana del Barrio",
+                "poi_category": "church",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        self.assertEqual(museum_request["state"]["place_kind"], "museum")
+        self.assertEqual(church_request["state"]["place_kind"], "worship")
 
     def test_pharmacy_ends_before_the_guide_node(self):
         graph = compile_graph(DISABLED)
@@ -538,6 +716,16 @@ class CityKnowledgeTests(unittest.TestCase):
     def test_olivos_only_looks_at_vicente_lopez(self):
         self.assertEqual(load_index().cities_near(-34.507, -58.490), ["vicente-lopez"])
 
+    def test_the_duarte_vault_is_eva_peron(self):
+        figure = load_index().figure_match(
+            Place("Familia Duarte", "point_of_interest", 40, -34.5883, -58.3937)
+        )
+        self.assertIsNotNone(figure)
+        self.assertEqual(figure.name, "Eva Perón")
+        self.assertIsNone(
+            load_index().figure_match(Place("Duarte", "point_of_interest", 40, -34.60, -58.40))
+        )
+
     def test_a_city_without_data_finds_nothing_locally(self):
         index = load_index()
         self.assertEqual(index.cities_near(-31.4167, -64.1833), [])
@@ -598,6 +786,16 @@ class CityKnowledgeTests(unittest.TestCase):
 
 
 class VoiceNameTests(unittest.TestCase):
+    def test_a_person_inside_a_cemetery_is_not_told_as_the_cemetery(self):
+        self.assertEqual(category_for_speech("Bartolomé Mitre", "cemetery"), "")
+        self.assertEqual(category_for_speech("Tumba de Bartolomé Mitre", "cemetery"), "")
+        self.assertEqual(
+            category_for_speech("Cementerio de la Recoleta", "cemetery"),
+            "cemetery",
+        )
+        self.assertIn("no es el cementerio", GUIDE_SYSTEM_PROMPT)
+        self.assertNotIn("ignorá ese nombre", GUIDE_SYSTEM_PROMPT)
+
     def test_mentions_place_with_accents(self):
         self.assertTrue(mentions_place("Vale la pena mirar la Plaza San Martín un rato.", "Plaza San Martín"))
         self.assertTrue(mentions_place("La plaza san martin tiene sombra.", "Plaza San Martín"))
