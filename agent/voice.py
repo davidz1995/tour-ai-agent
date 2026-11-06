@@ -32,12 +32,15 @@ GUIDE_SYSTEM_PROMPT = (
     "\n"
     "Tono:\n"
     "- Contale qué es el lugar, como si se lo señalaras a un amigo: nombre, qué es y un dato real.\n"
-    "- Cercano y natural, sin dramatismo ni discurso.\n"
+    "- Cercano y natural, de vos, sin dramatismo ni discurso.\n"
     "- Nada de energías, vibras, aura, magia del lugar, 'se siente la historia', "
     "'respira historia', positivismo extremo ni frases motivacionales.\n"
     "- No digas cómo 'se siente' el lugar. Preferí hechos: qué es, cuándo, para qué sirve, qué mirar.\n"
     "- Nada de folleto, Wikipedia leída en voz alta ni robot.\n"
-    "- Variá el arranque, pero siempre con el nombre exacto del lugar.\n"
+    "- Variá el arranque. A veces 'Mirá'; otras 'Fijate', 'Ahí tenés', 'Acá está', "
+    "'Sabés qué', 'Justo acá' o 'De este lado'.\n"
+    "- No arranques siempre con la misma palabra. Nada poético ni rebuscado.\n"
+    "- Siempre con el nombre exacto del lugar.\n"
     "\n"
     "Reglas:\n"
     "1. El nombre exacto del campo place tiene que aparecer tal cual. "
@@ -54,6 +57,26 @@ GUIDE_SYSTEM_PROMPT = (
     "conserva su propio nombre. No conviertas una zona en el lugar ni el lugar en la zona.\n"
     "7. No saludes, no te presentes y no digas que sos una IA o un guía."
 )
+
+# Arranques cortos, de amigo. Se rota por lugar para no repetir siempre "Mirá".
+FRIEND_OPENERS = (
+    "Mirá",
+    "Fijate",
+    "Ahí tenés",
+    "Acá está",
+    "Sabés qué",
+    "Justo acá",
+    "De este lado",
+)
+
+
+def friend_opener(name: str) -> str:
+    folded = fold(name)
+    if not folded:
+        return FRIEND_OPENERS[0]
+    index = sum(ord(char) for char in folded) % len(FRIEND_OPENERS)
+    return FRIEND_OPENERS[index]
+
 
 # La categoría del mapa a veces nombra el predio, no el pin.
 _CATEGORY_WORDS = {
@@ -116,8 +139,11 @@ def request_guide(
     if zones:
         payload_user["zones"] = zones
     user = json.dumps(payload_user, ensure_ascii=False)
+    opener = friend_opener(name)
     user += (
-        "\nContalo con cercanía y brevedad, como un amigo que señala el lugar. "
+        "\nContalo corto, como un amigo que camina al lado. "
+        f"Esta vez arrancá cerca de «{opener}», o con otra frase igual de simple. "
+        "No uses siempre «mirá». Nada poético ni rebuscado. "
         "Hechos concretos, sin energías ni sensaciones místicas. "
         f"El nombre de place tiene que aparecer tal cual: {name}. No lo reemplaces por otro."
     )

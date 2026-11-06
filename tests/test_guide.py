@@ -16,7 +16,14 @@ from agent.retrieve import KNOWLEDGE_DIR, load_index, read_knowledge, search_his
 from agent.server import body_length_error, response_for
 from agent.settings import settings_from
 from agent.situation import analyze_situation
-from agent.voice import GUIDE_SYSTEM_PROMPT, category_for_speech, ensure_place_name, mentions_place
+from agent.voice import (
+    FRIEND_OPENERS,
+    GUIDE_SYSTEM_PROMPT,
+    category_for_speech,
+    ensure_place_name,
+    friend_opener,
+    mentions_place,
+)
 
 DISABLED = settings_from({"MODEL_API_KEY": "", "MODEL_BASE_URL": "https://api.openai.com/v1", "MODEL_NAME": "gpt-4o-mini"})
 
@@ -839,6 +846,16 @@ class VoiceNameTests(unittest.TestCase):
         )
         self.assertIn("no es el cementerio", GUIDE_SYSTEM_PROMPT)
         self.assertNotIn("ignorá ese nombre", GUIDE_SYSTEM_PROMPT)
+        self.assertIn("No arranques siempre con la misma palabra", GUIDE_SYSTEM_PROMPT)
+
+    def test_openers_vary_between_places_and_stay_plain(self):
+        self.assertIn("Mirá", FRIEND_OPENERS)
+        self.assertGreater(len(set(FRIEND_OPENERS)), 3)
+        self.assertEqual(friend_opener("Plaza San Martín"), friend_opener("Plaza San Martín"))
+        self.assertNotEqual(
+            friend_opener("Cementerio de la Recoleta"),
+            friend_opener("Floralis Genérica"),
+        )
 
     def test_mentions_place_with_accents(self):
         self.assertTrue(mentions_place("Vale la pena mirar la Plaza San Martín un rato.", "Plaza San Martín"))
