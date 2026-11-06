@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -53,9 +54,12 @@ GUIDE_SYSTEM_PROMPT = (
     "5. Usá solo un hecho que el dato histórico diga de ese mismo lugar. "
     "Si no hay dato sobre place, no inventes fechas, episodios ni qué tipo de lugar es. "
     "La categoría del mapa no alcanza para afirmarlo.\n"
-    "6. Si hay zones, están en el mismo predio. place es el lugar principal y cada zona "
+    "6. No digas el barrio, el barrio vecino ni la ciudad donde queda, "
+    "salvo que el dato histórico lo diga. La persona ya está ahí. "
+    "No ubiques Plaza Francia en Belgrano ni El Ateneo en San Telmo.\n"
+    "7. Si hay zones, están en el mismo predio. place es el lugar principal y cada zona "
     "conserva su propio nombre. No conviertas una zona en el lugar ni el lugar en la zona.\n"
-    "7. No saludes, no te presentes y no digas que sos una IA o un guía."
+    "8. No saludes, no te presentes y no digas que sos una IA o un guía."
 )
 
 # Arranques cortos, de amigo. Se rota por lugar para no repetir siempre "Mirá".
@@ -76,6 +80,84 @@ def friend_opener(name: str) -> str:
         return FRIEND_OPENERS[0]
     index = sum(ord(char) for char in folded) % len(FRIEND_OPENERS)
     return FRIEND_OPENERS[index]
+
+
+# Barrios que el modelo suele inventar. El más largo va primero para no cortar "san telmo" en "telmo".
+_BARRIOS = (
+    "villa general mitre",
+    "parque avellaneda",
+    "parque chacabuco",
+    "parque patricios",
+    "villa del parque",
+    "villa pueyrredon",
+    "villa santa rita",
+    "villa riachuelo",
+    "puerto madero",
+    "nueva pompeya",
+    "villa urquiza",
+    "villa ortuzar",
+    "villa devoto",
+    "villa soldati",
+    "villa lugano",
+    "villa crespo",
+    "villa martelli",
+    "villa adelina",
+    "vicente lopez",
+    "monte castro",
+    "la paternal",
+    "barrio norte",
+    "san cristobal",
+    "san nicolas",
+    "velez sarsfield",
+    "san telmo",
+    "la lucila",
+    "villa luro",
+    "villa real",
+    "la boca",
+    "agronomia",
+    "almagro",
+    "balvanera",
+    "barracas",
+    "belgrano",
+    "boedo",
+    "caballito",
+    "carapachay",
+    "chacarita",
+    "coghlan",
+    "colegiales",
+    "constitucion",
+    "floresta",
+    "florida",
+    "flores",
+    "liniers",
+    "mataderos",
+    "monserrat",
+    "montserrat",
+    "munro",
+    "nunez",
+    "olivos",
+    "palermo",
+    "parque chas",
+    "recoleta",
+    "retiro",
+    "saavedra",
+    "versalles",
+)
+_BARRIO_CUE = re.compile(
+    r"(?:barrio(?:\s+de)?|(?:en|de|del))\s+(?:(?:la|el)\s+)?("
+    + "|".join(re.escape(name) for name in sorted(_BARRIOS, key=len, reverse=True))
+    + r")(?![a-z0-9])"
+)
+
+
+def located_barrios(text: str) -> set[str]:
+    """Barrios que el texto afirma, como 'de Belgrano' o 'en San Telmo'."""
+    return {match.group(1) for match in _BARRIO_CUE.finditer(fold(text))}
+
+
+def location_is_grounded(text: str, name: str, description: str) -> bool:
+    """El relato no puede sumar un barrio que el dato y el nombre no dicen."""
+    return located_barrios(text) <= located_barrios(f"{name}. {description}")
 
 
 # La categoría del mapa a veces nombra el predio, no el pin.
@@ -120,7 +202,9 @@ def write_script(
             zone_list,
         )
         if generated:
-            return ensure_place_name(generated, name)
+            spoken = ensure_place_name(generated, name)
+            if location_is_grounded(spoken, name, description):
+                return spoken
     return local_script(name, description, zone_list)
 
 
@@ -145,6 +229,7 @@ def request_guide(
         f"Esta vez arrancá cerca de «{opener}», o con otra frase igual de simple. "
         "No uses siempre «mirá». Nada poético ni rebuscado. "
         "Hechos concretos, sin energías ni sensaciones místicas. "
+        "No digas el barrio ni la ciudad si el dato histórico no lo dice. "
         f"El nombre de place tiene que aparecer tal cual: {name}. No lo reemplaces por otro."
     )
     if description:

@@ -25,12 +25,13 @@ INSTRUCTIONS = (
     "Si el pin es una persona, una tumba o una bóveda, no alcanza con que se pueda mirar: "
     "tiene que ser alguien que casi cualquiera reconocería. "
     "Si `place_kind` es `museum` o `worship`, seguí esa regla y no la categoría del mapa. "
-    "Si `is_duplicate` es verdadero, el mapa repitió el mismo lugar y no se vuelve a marcar."
+    "Si `is_duplicate` es verdadero, el mapa repitió el mismo lugar y no se vuelve a marcar. "
+    "Si `is_generic` es verdadero, el pin no dice qué lugar es y no se marca."
 )
 CRITERIA_TRUE = (
     "El pin es el sitio: se señala, se mira o se recorre. "
     "Monumento, museo, plaza, parque, mirador o reserva que es el lugar, "
-    "teatro, estadio, universidad, arquitectura notable, sitio histórico, biblioteca, "
+    "teatro, estadio, una universidad con nombre propio, arquitectura notable, sitio histórico, biblioteca, "
     "cementerio histórico o similar. El nombre nombra ese sitio, no una empresa. "
     "Un lugar chico o poco famoso sigue siendo true si es el sitio, no es una persona "
     "y `place_kind` no es `worship`. "
@@ -65,7 +66,10 @@ CRITERIA_FALSE = (
     "que un visitante no reconocería, aunque el mapa lo marque como sitio histórico, y `in_curated_base` es falso. "
     "False si `is_duplicate` es verdadero: es el mismo lugar en otro pin o con un nombre casi igual, "
     "aunque esté en otro punto del predio y aunque `in_curated_base` sea verdadero. "
-    "Cementerio de la Recoleta y Cementerio Recoleta son el mismo sitio."
+    "Cementerio de la Recoleta y Cementerio Recoleta son el mismo sitio. "
+    "False si `is_generic` es verdadero: el pin se llama solo Universidad, University o un nombre igual de vacío "
+    "que no dice cuál es. No alcanza la categoría university ni la palabra universidad. "
+    "Universidad de Buenos Aires sí dice cuál es. Una que se llama solo Universidad, no."
 )
 
 TOURIST_CATEGORIES = frozenset({
@@ -147,6 +151,33 @@ WORSHIP_TOKENS = frozenset({
     "capilla",
 })
 NOTABLE_WORSHIP_TOKENS = frozenset({"catedral", "basilica", "abadia", "monasterio", "convento"})
+# Palabras que no alcanzan para saber cuál universidad es.
+GENERIC_UNIVERSITY_WORDS = frozenset({
+    "universidad",
+    "universidades",
+    "university",
+    "universitario",
+    "universitaria",
+    "nacional",
+    "publica",
+    "publico",
+    "privada",
+    "privado",
+    "campus",
+    "sede",
+    "facultad",
+    "facultades",
+})
+UNIVERSITY_WORDS = frozenset({
+    "universidad",
+    "universidades",
+    "university",
+    "universitario",
+    "universitaria",
+    "campus",
+    "facultad",
+    "facultades",
+})
 TOURIST_TOKENS = frozenset({
     "museo",
     "catedral",
@@ -177,6 +208,7 @@ class JevState(TypedDict):
     place_kind: str
     in_curated_base: bool
     is_duplicate: bool
+    is_generic: bool
     recent_history: list[str]
 
 
@@ -220,6 +252,14 @@ def place_kind_for(name: str, category: str) -> str:
     return "site"
 
 
+def generic_university(name: str) -> bool:
+    """True si el nombre no dice cuál universidad es. «Universidad» no alcanza."""
+    parts = set(tokens(name))
+    if not parts or not parts <= GENERIC_UNIVERSITY_WORDS:
+        return False
+    return bool(parts & UNIVERSITY_WORDS)
+
+
 def build_request(state: JevState) -> JevRequest:
     """La API identifica cada pregunta por su clave. No es un array."""
     return {
@@ -230,6 +270,7 @@ def build_request(state: JevState) -> JevRequest:
             "place_kind": place_kind_for(state["poi_name"], state["poi_category"]),
             "in_curated_base": state["in_curated_base"],
             "is_duplicate": bool(state.get("is_duplicate", False)),
+            "is_generic": generic_university(state["poi_name"]) and not state["in_curated_base"],
             "recent_history": list(state["recent_history"]),
         },
         "questions": {
@@ -245,6 +286,8 @@ def build_request(state: JevState) -> JevRequest:
 def probability_of_true(state: JevState, settings: Settings, timeout: float | None = JEV_TIMEOUT_SECONDS) -> float:
     if state.get("is_duplicate"):
         return 0.04
+    if generic_university(state.get("poi_name", "")) and not state.get("in_curated_base"):
+        return 0.08
     if settings.jev_key and timeout is not None:
         remote = ask_remote(state, settings, timeout)
         if remote is not None:
@@ -310,6 +353,8 @@ def simulate_noul(state: JevState) -> float:
     """
     if state.get("is_duplicate") or already_heard(state["poi_name"], state["recent_history"]):
         return 0.04
+    if generic_university(state["poi_name"]) and not state["in_curated_base"]:
+        return 0.08
     if state["in_curated_base"]:
         return 0.95
     kind = place_kind_for(state["poi_name"], state["poi_category"])
@@ -365,5 +410,6 @@ def clean_jev_state(
         "place_kind": place_kind_for(cleaned_name, cleaned_category),
         "in_curated_base": in_curated_base,
         "is_duplicate": is_duplicate,
+        "is_generic": generic_university(cleaned_name) and not in_curated_base,
         "recent_history": names[-5:],
     }

@@ -22,6 +22,7 @@ from agent.voice import (
     category_for_speech,
     ensure_place_name,
     friend_opener,
+    location_is_grounded,
     mentions_place,
 )
 
@@ -317,6 +318,46 @@ class ContractTests(unittest.TestCase):
         self.assertIn("Museo de la Ciudad", response["reply"])
         self.assertNotIn("Iglesia", response["reply"])
 
+    def test_a_generic_university_pin_is_not_marked(self):
+        places = [
+            {
+                "id": "uni",
+                "name": "Universidad",
+                "latitude": -34.5995,
+                "longitude": -58.3970,
+                "category": "university",
+                "distanceMeters": 40,
+            }
+        ]
+        body = context_body(
+            location={"latitude": -34.5992, "longitude": -58.3966},
+            pointsOfInterest=places,
+        )
+        status, response = response_for(json.dumps(body).encode(), DISABLED)
+        self.assertEqual(status, 200)
+        self.assertEqual(response["interests"], [])
+        self.assertNotIn("Universidad", response.get("reply", ""))
+
+    def test_the_ateneo_grand_splendid_is_marked_in_front_of_the_door(self):
+        places = [
+            {
+                "id": "ateneo",
+                "name": "El Ateneo Grand Splendid",
+                "latitude": -34.59598,
+                "longitude": -58.39426,
+                "category": "store",
+                "distanceMeters": 15,
+            }
+        ]
+        body = context_body(
+            location={"latitude": -34.59605, "longitude": -58.39420},
+            pointsOfInterest=places,
+        )
+        status, response = response_for(json.dumps(body).encode(), DISABLED)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["name"] for item in response["interests"]], ["El Ateneo Grand Splendid"])
+        self.assertIn("1919", response["reply"])
+
     def test_two_pins_of_recoleta_count_as_one_place(self):
         places = [
             {
@@ -469,10 +510,11 @@ class GraphTests(unittest.TestCase):
         )
         self.assertEqual(
             set(request["state"]),
-            {"poi_name", "poi_category", "place_kind", "in_curated_base", "is_duplicate", "recent_history"},
+            {"poi_name", "poi_category", "place_kind", "in_curated_base", "is_duplicate", "is_generic", "recent_history"},
         )
         self.assertEqual(request["state"]["place_kind"], "site")
         self.assertIs(request["state"]["is_duplicate"], False)
+        self.assertIs(request["state"]["is_generic"], False)
         self.assertIs(request["state"]["in_curated_base"], True)
         question = request["questions"]["should_speak"]
         self.assertEqual(question["type"], "noul")
@@ -485,6 +527,7 @@ class GraphTests(unittest.TestCase):
         self.assertIn("vista de pájaros", CRITERIA_FALSE)
         self.assertIn("no reconocería", CRITERIA_FALSE)
         self.assertIn("is_duplicate", CRITERIA_FALSE)
+        self.assertIn("is_generic", CRITERIA_FALSE)
 
     def test_scenic_business_name_is_not_a_place_to_narrate(self):
         agency = simulate_noul(
@@ -599,6 +642,44 @@ class GraphTests(unittest.TestCase):
         )
         self.assertEqual(museum_request["state"]["place_kind"], "museum")
         self.assertEqual(church_request["state"]["place_kind"], "worship")
+
+    def test_a_nameless_university_is_not_worth_telling(self):
+        bare = simulate_noul(
+            {
+                "poi_name": "Universidad",
+                "poi_category": "university",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        national = simulate_noul(
+            {
+                "poi_name": "Universidad Nacional",
+                "poi_category": "university",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        named = simulate_noul(
+            {
+                "poi_name": "Universidad de Buenos Aires",
+                "poi_category": "university",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        self.assertLess(bare, DISABLED.jev_threshold)
+        self.assertLess(national, DISABLED.jev_threshold)
+        self.assertGreater(named, DISABLED.jev_threshold)
+        request = build_request(
+            {
+                "poi_name": "Universidad",
+                "poi_category": "university",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        self.assertIs(request["state"]["is_generic"], True)
 
     def test_pharmacy_ends_before_the_guide_node(self):
         graph = compile_graph(DISABLED)
@@ -759,7 +840,7 @@ class CityKnowledgeTests(unittest.TestCase):
     def test_both_cities_load_with_caba_places(self):
         counts = load_index().counts()
         self.assertEqual(set(counts), {"caba", "vicente-lopez"})
-        self.assertEqual(counts["caba"], 16)
+        self.assertEqual(counts["caba"], 17)
 
     def test_a_point_on_general_paz_looks_at_both_cities(self):
         self.assertEqual(load_index().cities_near(-34.540, -58.480), ["caba", "vicente-lopez"])
@@ -847,6 +928,37 @@ class VoiceNameTests(unittest.TestCase):
         self.assertIn("no es el cementerio", GUIDE_SYSTEM_PROMPT)
         self.assertNotIn("ignorá ese nombre", GUIDE_SYSTEM_PROMPT)
         self.assertIn("No arranques siempre con la misma palabra", GUIDE_SYSTEM_PROMPT)
+        self.assertIn("No digas el barrio", GUIDE_SYSTEM_PROMPT)
+
+    def test_a_story_cannot_invent_the_neighborhood(self):
+        self.assertFalse(
+            location_is_grounded(
+                "Plaza Francia es una plaza emblemática de Belgrano.",
+                "Plaza Francia",
+                "",
+            )
+        )
+        self.assertFalse(
+            location_is_grounded(
+                "El Ateneo Grand Splendid está en San Telmo.",
+                "El Ateneo Grand Splendid",
+                "Se inauguró en 1919 como el Teatro Grand Splendid.",
+            )
+        )
+        self.assertTrue(
+            location_is_grounded(
+                "Plaza Dorrego es el corazón de San Telmo.",
+                "Plaza Dorrego",
+                "Es el corazón viejo de San Telmo, el barrio que creció al sur de la plaza mayor.",
+            )
+        )
+        self.assertTrue(
+            location_is_grounded(
+                "Se retiró del teatro en 1919.",
+                "El Ateneo Grand Splendid",
+                "Se inauguró en 1919.",
+            )
+        )
 
     def test_openers_vary_between_places_and_stay_plain(self):
         self.assertIn("Mirá", FRIEND_OPENERS)
