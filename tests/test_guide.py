@@ -358,6 +358,36 @@ class ContractTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in response["interests"]], ["El Ateneo Grand Splendid"])
         self.assertIn("1919", response["reply"])
 
+    def test_guerrin_is_marked_and_an_empty_name_next_to_it_is_not(self):
+        places = [
+            {
+                "id": "fantasma",
+                "name": "Eddercastelo",
+                "latitude": -34.60405,
+                "longitude": -58.3858,
+                "category": "point_of_interest",
+                "distanceMeters": 12,
+            },
+            {
+                "id": "guerrin",
+                "name": "Pizzería Güerrín",
+                "latitude": -34.604031,
+                "longitude": -58.38575,
+                "category": "restaurant",
+                "distanceMeters": 18,
+            },
+        ]
+        body = context_body(
+            location={"latitude": -34.60404, "longitude": -58.38578},
+            pointsOfInterest=places,
+        )
+        status, response = response_for(json.dumps(body).encode(), DISABLED)
+        names = [item["name"] for item in response["interests"]]
+        self.assertEqual(status, 200)
+        self.assertEqual(names, ["Pizzería Güerrín"])
+        self.assertIn("1932", response["reply"])
+        self.assertNotIn("Eddercastelo", response.get("reply", ""))
+
     def test_the_obelisk_steps_are_not_the_monument(self):
         places = [
             {
@@ -556,11 +586,12 @@ class GraphTests(unittest.TestCase):
         )
         self.assertEqual(
             set(request["state"]),
-            {"poi_name", "poi_category", "place_kind", "in_curated_base", "is_duplicate", "is_generic", "recent_history"},
+            {"poi_name", "poi_category", "place_kind", "in_curated_base", "is_duplicate", "is_generic", "is_opaque", "recent_history"},
         )
         self.assertEqual(request["state"]["place_kind"], "site")
         self.assertIs(request["state"]["is_duplicate"], False)
         self.assertIs(request["state"]["is_generic"], False)
+        self.assertIs(request["state"]["is_opaque"], False)
         self.assertIs(request["state"]["in_curated_base"], True)
         question = request["questions"]["should_speak"]
         self.assertEqual(question["type"], "noul")
@@ -574,6 +605,8 @@ class GraphTests(unittest.TestCase):
         self.assertIn("no reconocería", CRITERIA_FALSE)
         self.assertIn("is_duplicate", CRITERIA_FALSE)
         self.assertIn("is_generic", CRITERIA_FALSE)
+        self.assertIn("is_opaque", CRITERIA_FALSE)
+        self.assertNotIn("Eddercastelo", CRITERIA_FALSE)
 
     def test_scenic_business_name_is_not_a_place_to_narrate(self):
         agency = simulate_noul(
@@ -726,6 +759,31 @@ class GraphTests(unittest.TestCase):
             }
         )
         self.assertIs(request["state"]["is_generic"], True)
+
+    def test_any_name_without_a_place_is_left_out(self):
+        for name, category in (
+            ("Eddercastelo", "point_of_interest"),
+            ("Xylophonemark", "historical_landmark"),
+            ("Local sin ficha", "tourist_attraction"),
+        ):
+            score = simulate_noul(
+                {
+                    "poi_name": name,
+                    "poi_category": category,
+                    "in_curated_base": False,
+                    "recent_history": [],
+                }
+            )
+            self.assertLess(score, DISABLED.jev_threshold, name)
+        ordinary = simulate_noul(
+            {
+                "poi_name": "Pizzería del Barrio",
+                "poi_category": "restaurant",
+                "in_curated_base": False,
+                "recent_history": [],
+            }
+        )
+        self.assertLess(ordinary, DISABLED.jev_threshold)
 
     def test_pharmacy_ends_before_the_guide_node(self):
         graph = compile_graph(DISABLED)
@@ -890,7 +948,7 @@ class CityKnowledgeTests(unittest.TestCase):
     def test_both_cities_load_with_caba_places(self):
         counts = load_index().counts()
         self.assertEqual(set(counts), {"caba", "vicente-lopez"})
-        self.assertEqual(counts["caba"], 19)
+        self.assertEqual(counts["caba"], 21)
 
     def test_a_point_on_general_paz_looks_at_both_cities(self):
         self.assertEqual(load_index().cities_near(-34.540, -58.480), ["caba", "vicente-lopez"])

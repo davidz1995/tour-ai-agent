@@ -26,15 +26,20 @@ INSTRUCTIONS = (
     "tiene que ser alguien que casi cualquiera reconocería. "
     "Si `place_kind` es `museum` o `worship`, seguí esa regla y no la categoría del mapa. "
     "Si `is_duplicate` es verdadero, el mapa repitió el mismo lugar y no se vuelve a marcar. "
-    "Si `is_generic` es verdadero, el pin no dice qué lugar es y no se marca."
+    "Si `is_generic` es verdadero, el pin no dice qué lugar es y no se marca. "
+    "Si `is_opaque` es verdadero, el nombre no identifica un lugar y no se marca, "
+    "aunque el mapa lo pinte: hay miles de pines así. "
+    "Una pizzería, un café o un restaurante se marca solo si es un clásico al que la gente va por el lugar."
 )
 CRITERIA_TRUE = (
     "El pin es el sitio: se señala, se mira o se recorre. "
     "Monumento, museo, plaza, parque, mirador o reserva que es el lugar, "
     "teatro, estadio, una universidad con nombre propio, arquitectura notable, sitio histórico, biblioteca, "
     "cementerio histórico o similar. El nombre nombra ese sitio, no una empresa. "
-    "Un lugar chico o poco famoso sigue siendo true si es el sitio, no es una persona "
-    "y `place_kind` no es `worship`. "
+    "Un lugar chico sigue siendo true solo si el nombre dice qué es o si es un destino que la gente reconoce, "
+    "no es una persona y `place_kind` no es `worship`. "
+    "Una pizzería, un café o un restaurante es true solo cuando es un clásico al que la gente va por el lugar, "
+    "aunque la categoría sea restaurant, bar o cafe. Si el nombre no se reconoce, es false. "
     "Si `place_kind` es `museum`, es true: el nombre dice museo o la categoría es museum. "
     "Si `place_kind` es `worship`, es true solo cuando el edificio tiene belleza física "
     "para quien pasa: una catedral, una basílica, una fachada o un interior que la gente visita por verlo. "
@@ -69,7 +74,11 @@ CRITERIA_FALSE = (
     "Cementerio de la Recoleta y Cementerio Recoleta son el mismo sitio. "
     "False si `is_generic` es verdadero: el pin se llama solo Universidad, University o un nombre igual de vacío "
     "que no dice cuál es. No alcanza la categoría university ni la palabra universidad. "
-    "Universidad de Buenos Aires sí dice cuál es. Una que se llama solo Universidad, no."
+    "Universidad de Buenos Aires sí dice cuál es. Una que se llama solo Universidad, no. "
+    "False si `is_opaque` es verdadero: el nombre no dice qué lugar es, no está en la base "
+    "y no es un clásico reconocible. No alcanza point_of_interest, tourist_attraction "
+    "ni historical_landmark. No se listan esos pines: si no sabés qué es, no se marca. "
+    "Un restaurante, bar o café que no sea un clásico también es false."
 )
 
 TOURIST_CATEGORIES = frozenset({
@@ -151,6 +160,7 @@ WORSHIP_TOKENS = frozenset({
     "capilla",
 })
 NOTABLE_WORSHIP_TOKENS = frozenset({"catedral", "basilica", "abadia", "monasterio", "convento"})
+FOOD_CATEGORIES = frozenset({"restaurant", "cafe", "bar", "bakery"})
 # Palabras que no alcanzan para saber cuál universidad es.
 GENERIC_UNIVERSITY_WORDS = frozenset({
     "universidad",
@@ -209,6 +219,7 @@ class JevState(TypedDict):
     in_curated_base: bool
     is_duplicate: bool
     is_generic: bool
+    is_opaque: bool
     recent_history: list[str]
 
 
@@ -252,6 +263,21 @@ def place_kind_for(name: str, category: str) -> str:
     return "site"
 
 
+def is_opaque(name: str, category: str, in_curated_base: bool) -> bool:
+    """Un pin sin dato y sin un nombre que diga qué lugar es. No depende de un nombre puntual."""
+    if in_curated_base:
+        return False
+    kind = place_kind_for(name, category)
+    if kind == "museum":
+        return False
+    if kind == "worship" and name_tokens(name) & NOTABLE_WORSHIP_TOKENS:
+        return False
+    if name_tokens(name) & TOURIST_TOKENS:
+        return False
+    category_key = category.strip().lower().replace(" ", "_")
+    return category_key not in FOOD_CATEGORIES
+
+
 def generic_university(name: str) -> bool:
     """True si el nombre no dice cuál universidad es. «Universidad» no alcanza."""
     parts = set(tokens(name))
@@ -271,6 +297,7 @@ def build_request(state: JevState) -> JevRequest:
             "in_curated_base": state["in_curated_base"],
             "is_duplicate": bool(state.get("is_duplicate", False)),
             "is_generic": generic_university(state["poi_name"]) and not state["in_curated_base"],
+            "is_opaque": is_opaque(state["poi_name"], state["poi_category"], state["in_curated_base"]),
             "recent_history": list(state["recent_history"]),
         },
         "questions": {
@@ -288,6 +315,8 @@ def probability_of_true(state: JevState, settings: Settings, timeout: float | No
         return 0.04
     if generic_university(state.get("poi_name", "")) and not state.get("in_curated_base"):
         return 0.08
+    if is_opaque(state.get("poi_name", ""), state.get("poi_category", ""), bool(state.get("in_curated_base"))):
+        return 0.12
     if settings.jev_key and timeout is not None:
         remote = ask_remote(state, settings, timeout)
         if remote is not None:
@@ -369,6 +398,8 @@ def simulate_noul(state: JevState) -> float:
     tokens = name_tokens(state["poi_name"])
     if tokens & (COMMON_TOKENS | BUSINESS_TOKENS):
         return 0.05
+    if is_opaque(state["poi_name"], state["poi_category"], state["in_curated_base"]):
+        return 0.12
     category = state["poi_category"].strip().lower().replace(" ", "_")
     if category in COMMON_CATEGORIES:
         return 0.07
@@ -411,5 +442,6 @@ def clean_jev_state(
         "in_curated_base": in_curated_base,
         "is_duplicate": is_duplicate,
         "is_generic": generic_university(cleaned_name) and not in_curated_base,
+        "is_opaque": is_opaque(cleaned_name, cleaned_category, in_curated_base),
         "recent_history": names[-5:],
     }
