@@ -358,6 +358,38 @@ class ContractTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in response["interests"]], ["El Ateneo Grand Splendid"])
         self.assertIn("1919", response["reply"])
 
+    def test_the_obelisk_steps_are_not_the_monument(self):
+        places = [
+            {
+                "id": "mirador",
+                "name": "Mirador Obelisco",
+                "latitude": -34.6032779,
+                "longitude": -58.3824879,
+                "category": "tourist_attraction",
+                "distanceMeters": 15,
+            }
+        ]
+        body = context_body(
+            location={"latitude": -34.6033, "longitude": -58.3825},
+            pointsOfInterest=places,
+        )
+        status, response = response_for(json.dumps(body).encode(), DISABLED)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["name"] for item in response["interests"]], ["Mirador Obelisco"])
+        self.assertIn("2019", response["reply"])
+        self.assertIn("frente", response["reply"])
+        self.assertNotIn("1936", response["reply"])
+        self.assertNotIn("2025", response["reply"])
+        monument = load_index().search(Place("Obelisco", "monument", 20, -34.60374, -58.38157))
+        self.assertIsNotNone(monument)
+        self.assertEqual(monument.id, "caba/obelisco")
+        self.assertIn("1936", monument.text)
+        summit = load_index().search(
+            Place("Mirador Obelisco", "tourist_attraction", 10, -34.60374, -58.38157)
+        )
+        self.assertIsNotNone(summit)
+        self.assertEqual(summit.id, "caba/mirador-cima-obelisco")
+
     def test_two_pins_of_recoleta_count_as_one_place(self):
         places = [
             {
@@ -482,6 +514,20 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(
             {cluster.primary.name for cluster in clusters},
             {"Bartolomé Mitre", "Cementerio de la Recoleta"},
+        )
+
+    def test_the_lookout_does_not_become_the_obelisk(self):
+        obelisk = Place("Obelisco", "monument", 15, -34.60374, -58.38157)
+        lookout = Place("Mirador Obelisco", "tourist_attraction", 20, -34.60375, -58.38158)
+        clusters = cluster_interests(
+            [
+                rank_place(obelisk, "Se inauguró en 1936.", True),
+                rank_place(lookout, "Abrió al público en 2025.", True),
+            ]
+        )
+        self.assertEqual(
+            {cluster.primary.name for cluster in clusters},
+            {"Obelisco", "Mirador Obelisco"},
         )
 
     def test_distinct_tombs_do_not_become_one_site(self):
@@ -824,6 +870,10 @@ class WebContextTests(unittest.TestCase):
     def test_one_shared_word_is_not_a_match(self):
         self.assertEqual(match_score("Plaza San Martín", "Plaza de Mayo", 40), 0)
 
+    def test_a_lookout_does_not_take_the_monument_page(self):
+        self.assertEqual(match_score("Mirador Obelisco", "Obelisco", 30), 0)
+        self.assertGreater(match_score("Obelisco", "Obelisco", 30), 0)
+
     def test_no_time_left_skips_the_web(self):
         with patch("agent.graph.lookup_web") as web:
             reply = build_reply(
@@ -840,7 +890,7 @@ class CityKnowledgeTests(unittest.TestCase):
     def test_both_cities_load_with_caba_places(self):
         counts = load_index().counts()
         self.assertEqual(set(counts), {"caba", "vicente-lopez"})
-        self.assertEqual(counts["caba"], 17)
+        self.assertEqual(counts["caba"], 19)
 
     def test_a_point_on_general_paz_looks_at_both_cities(self):
         self.assertEqual(load_index().cities_near(-34.540, -58.480), ["caba", "vicente-lopez"])

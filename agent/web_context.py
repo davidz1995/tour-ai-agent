@@ -14,7 +14,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from agent.contract import clean_text
-from agent.retrieve import distance_meters, tokens
+from agent.retrieve import DISTINCT_PLACE_TOKENS, distance_meters, tokens
 
 WIKI_API = "https://es.wikipedia.org/w/api.php"
 WIKI_TIMEOUT_SECONDS = 2.5
@@ -189,6 +189,8 @@ def match_score(name: str, title: str, distance: float) -> int:
     smaller = place_tokens if len(place_tokens) <= len(title_tokens) else title_tokens
     larger = title_tokens if smaller is place_tokens else place_tokens
     if not smaller <= larger:
+        return 0
+    if (place_tokens - title_tokens) & DISTINCT_PLACE_TOKENS:
         return 0
     if len(smaller) >= 2:
         return len(smaller)

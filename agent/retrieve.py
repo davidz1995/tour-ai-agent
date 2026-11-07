@@ -21,6 +21,8 @@ CITY_MARGIN_DEGREES = 0.01
 MAX_PLACE_FILE_BYTES = 65_536
 EARTH_RADIUS_METERS = 6_371_000
 STOPWORDS = frozenset({"de", "del", "la", "las", "el", "los", "y", "en", "the", "of"})
+# Un mirador no es el monumento que mira. Esa palabra de más corta el match corto.
+DISTINCT_PLACE_TOKENS = frozenset({"mirador"})
 PERSON_MEMORIAL_TOKENS = frozenset({
     "tumba",
     "sepulcro",
@@ -336,8 +338,11 @@ def name_score(place_name: str, aliases: tuple[str, ...]) -> int:
     best = 0
     for alias in aliases:
         alias_tokens = set(tokens(alias))
-        if alias_tokens and alias_tokens <= place_tokens:
-            best = max(best, len(alias_tokens))
+        if not alias_tokens or not alias_tokens <= place_tokens:
+            continue
+        if (place_tokens - alias_tokens) & DISTINCT_PLACE_TOKENS:
+            continue
+        best = max(best, len(alias_tokens))
     return best
 
 
